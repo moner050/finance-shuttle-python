@@ -97,7 +97,7 @@ df.at["a", "Driver"] = False
 print(df)
 
 # csv 데이터 불러오기
-csv_data = pd.read_csv("./test-file/test_appl.csv", index_col=0)
+csv_data = pd.read_csv("test-file/test_appl.csv", index_col=0)
 csv_data.head(3)
 print(csv_data)
 # 데이터 csv 로 저장
@@ -111,7 +111,7 @@ excel_data.head(3)
 excel_data.to_excel("./test-file/test-save.xlsx", sheet_name="appl", engine="openpyxl")
 
 # 데이터 정보 요약하기
-data = pd.read_csv("./test-file/test_appl.csv", index_col=0)
+data = pd.read_csv("test-file/test_appl.csv", index_col=0)
 print(data.describe())
 
 # 데이터 산술연산 하기
