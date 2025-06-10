@@ -6,6 +6,14 @@
   - numpy 2.2.6
   - yfinance 0.2.61
   - openpyxl 3.1.5
+- Pycharm 2025.1.1.1
+
+
+- Pycharm IDE 및 Python 다운로드 링크
+  - Python  
+    https://www.python.org/downloads/release/python-31011/
+  - Pycharm  
+    https://www.jetbrains.com/ko-kr/pycharm/download/?section=windows
 
 ## 프로젝트 사용 전 명령어
 ```shell
