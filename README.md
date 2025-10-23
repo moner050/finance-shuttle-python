@@ -4,7 +4,7 @@
 - Python 3.10.11
   - Pandas 2.2.3
   - numpy 2.2.6
-  - yfinance 0.2.61
+  - yfinance 0.2.43
   - openpyxl 3.1.5
 - Pycharm 2025.1.1.1
 
