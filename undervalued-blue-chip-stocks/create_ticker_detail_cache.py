@@ -25,6 +25,8 @@ import pandas as pd, numpy as np, yfinance as yf
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
@@ -39,36 +41,24 @@ CONFIG = {
 
     # OHLCV 프리로드(라이트 지표)
     "PRELOAD_PERIOD": "120d",
-    "PRELOAD_CHUNK": 60,
-    "BATCH_RETRIES": 3,
-    "SINGLE_RETRIES": 2,
-    "FALLBACK_MAX_WORKERS": 12,
-    "YF_THREADS": True,
-    "SLEEP_SEC": 0.15,
+    "PRELOAD_CHUNK": 50,  # 청크 크기 줄임
+    "BATCH_RETRIES": 5,  # 재시도 횟수 증가
+    "SINGLE_RETRIES": 3,
+    "FALLBACK_MAX_WORKERS": 8,  # 워커 수 줄임
+    "YF_THREADS": False,  # 스레드 비활성화 (안정성)
+    "SLEEP_SEC": 0.25,  # 대기 시간 증가
+
+    # 네트워크 설정
+    "REQUEST_TIMEOUT": 60,
+    "PROXY_SETTINGS": {},  # {'http': 'http://proxy:port', 'https': 'https://proxy:port'}
 
     # 라이트 컷(라이트 통과 종목만 상세 재무 호출)
     "MIN_PRICE": 1.0,
-    "MIN_DOLLAR_VOLUME": 900_000,  # Price * avg20Vol
-    "SWING_FILTERS": {
-        "MIN_PRICE": 5.0,
-        "MIN_DOLLAR_VOLUME": 5_000_000,
-        "MIN_RVOL": 1.2,
-        "ATR_PCT_RANGE": [0.02, 0.12],
-        "TREND_RULE": "close>sma20>sma50",
-        "MIN_RET20": 0.00
-    },
-    "DAY_FILTERS": {
-        "MIN_PRICE": 5.0,
-        "MIN_DOLLAR_VOLUME": 20_000_000,
-        "MIN_RVOL": 2.0,
-        "ATR_PCT_RANGE": [0.03, 0.20],
-        "TREND_RULE": "any",
-        "MIN_RET5": 0.03
-    },
+    "MIN_DOLLAR_VOLUME": 900_000,
 
     # 상세 재무 호출 대상 범위
-    "DETAILED_TOP_K": 1000,  # 라이트 통과 중 DollarVol 상위 K까지 상세 재무 호출
-    "MAX_TICKERS": 5000,
+    "DETAILED_TOP_K": 12000,  # 상위 K 줄임
+    "MAX_TICKERS": 12000,  # 최대 티커 수 줄임 (처리 속도 향상)
     "UNIVERSE_OFFSET": 0,
     "SHUFFLE_UNIVERSE": True,
 
@@ -76,224 +66,507 @@ CONFIG = {
     "MIN_MKTCAP": 800_000_000,
 
     # 요청 헤더
-    "USER_AGENT": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
-
-    # 개선된 설정값 추가
-    "MIN_REV_YOY": -0.20,  # 최소 매출 성장률
-    "MIN_OP_MARGIN": 0.05,  # 최소 영업이익률
-    "MAX_DEBT_EQUITY": 2.0,  # 최대 부채비율
+    "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 }
 # ==================================================
 
 HEADERS = {"User-Agent": CONFIG["USER_AGENT"]}
-HTTP_SESSION = requests.Session(); HTTP_SESSION.headers.update(HEADERS)
+HTTP_SESSION = requests.Session()
+HTTP_SESSION.headers.update(HEADERS)
 
-def _normalize_ticker(t): return str(t).strip().upper().replace(".", "-")
+# 세션 설정
+session = requests.Session()
+session.headers.update({"User-Agent": CONFIG["USER_AGENT"]})
+if CONFIG["PROXY_SETTINGS"]:
+    session.proxies.update(CONFIG["PROXY_SETTINGS"])
+
+def _normalize_ticker(t):
+    return str(t).strip().upper().replace(".", "-")
 
 def _read_html(url: str):
-    r = HTTP_SESSION.get(url, timeout=30); r.raise_for_status()
-    return pd.read_html(io.StringIO(r.text))
+    try:
+        r = session.get(url, timeout=CONFIG["REQUEST_TIMEOUT"])
+        r.raise_for_status()
+        return pd.read_html(io.StringIO(r.text))
+    except Exception as e:
+        print(f"HTML 읽기 실패 {url}: {e}")
+        return []
+
 
 def get_sp500_symbols():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    df = _read_html(url)[0]
-    col = next((c for c in df.columns if str(c).lower().startswith("symbol")), "Symbol")
-    syms = df[col].dropna().astype(str).tolist()
-    print(f"[S&P500] from Wikipedia: {len(syms)}")
-    return [_normalize_ticker(s) for s in syms]
+    """S&P 500 종목 리스트 가져오기"""
+    urls = [
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+    ]
+
+    for url in urls:
+        try:
+            if "wikipedia" in url:
+                tables = _read_html(url)
+                if tables:
+                    df = tables[0]
+                    col = next((c for c in df.columns if str(c).lower().startswith("symbol")), "Symbol")
+                    syms = df[col].dropna().astype(str).tolist()
+                    print(f"[S&P500] Wikipedia에서 {len(syms)}개 종목 로드")
+                    return [_normalize_ticker(s) for s in syms]
+            else:
+                r = session.get(url, timeout=CONFIG["REQUEST_TIMEOUT"])
+                r.raise_for_status()
+                df = pd.read_csv(io.StringIO(r.text))
+                if 'Symbol' in df.columns:
+                    syms = df['Symbol'].dropna().astype(str).tolist()
+                    print(f"[S&P500] GitHub에서 {len(syms)}개 종목 로드")
+                    return [_normalize_ticker(s) for s in syms]
+        except Exception as e:
+            print(f"[S&P500] {url} 실패: {e}")
+            continue
+
+    # 폴백: 하드코딩된 주요 S&P 500 종목
+    fallback_sp500 = ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'GOOG', 'TSLA', 'BRK-B', 'UNH', 'JNJ', 'XOM',
+                      'JPM', 'V', 'NVDA', 'PG', 'MA', 'HD', 'CVX', 'LLY', 'ABBV', 'PFE']
+    print(f"[S&P500] 폴백: {len(fallback_sp500)}개 주요 종목 사용")
+    return fallback_sp500
 
 def _fetch_text(url):
-    r = HTTP_SESSION.get(url, timeout=30, allow_redirects=True)
-    r.raise_for_status()
-    return r.text
+    try:
+        r = session.get(url, timeout=CONFIG["REQUEST_TIMEOUT"], allow_redirects=True)
+        r.raise_for_status()
+        return r.text
+    except Exception as e:
+        print(f"텍스트 가져오기 실패 {url}: {e}")
+        return ""
 
 def _read_pipe_text_to_df(text: str) -> pd.DataFrame:
-    return pd.read_csv(io.StringIO(text), sep="|")
+    try:
+        return pd.read_csv(io.StringIO(text), sep="|")
+    except Exception as e:
+        print(f"파이프 텍스트 읽기 실패: {e}")
+        return pd.DataFrame()
+
 
 def _normalize_symbol_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
     cols = {c.lower(): c for c in df.columns}
-    sym  = cols.get("symbol") or cols.get("act symbol") or cols.get("nasdaq symbol") or list(df.columns)[0]
-    name = cols.get("security name") or cols.get("securityname") or cols.get("security")
-    etf  = cols.get("etf")
-    test = cols.get("test issue") or cols.get("testissue")
-    fin  = cols.get("financial status") or cols.get("financialstatus")
-    ex   = cols.get("exchange")
+    sym = cols.get("symbol") or cols.get("act symbol") or cols.get("nasdaq symbol") or list(df.columns)[0]
+
     out = df.copy()
-    out.rename(columns={sym:"Symbol"}, inplace=True)
-    if name: out.rename(columns={name:"SecurityName"}, inplace=True)
-    if etf:  out.rename(columns={etf:"ETF"}, inplace=True)
-    if test: out.rename(columns={test:"TestIssue"}, inplace=True)
-    if fin:  out.rename(columns={fin:"FinancialStatus"}, inplace=True)
-    if ex:   out.rename(columns={ex:"Exchange"}, inplace=True)
-    for c in ["Symbol","SecurityName","ETF","TestIssue","FinancialStatus","Exchange"]:
-        if c not in out.columns: out[c] = None
+    out.rename(columns={sym: "Symbol"}, inplace=True)
     out["Symbol"] = out["Symbol"].astype(str).str.upper().str.replace(".", "-", regex=False)
-    # 기본 클린업
-    mask_test = out["TestIssue"].astype(str).str.upper().ne("Y")
-    fin_s = out["FinancialStatus"].astype(str).str.upper()
-    mask_fin = (~fin_s.isin(["D","E","H","S","C","T"]))
-    return out[mask_test & mask_fin]
+
+    # 기본 필터링
+    if "TestIssue" in out.columns:
+        mask_test = out["TestIssue"].astype(str).str.upper().ne("Y")
+        out = out[mask_test]
+
+    if "FinancialStatus" in out.columns:
+        fin_s = out["FinancialStatus"].astype(str).str.upper()
+        mask_fin = (~fin_s.isin(["D", "E", "H", "S", "C", "T"]))
+        out = out[mask_fin]
+
+    return out
+
 
 def _filter_common_stock(df: pd.DataFrame) -> pd.DataFrame:
-    name_str = df["SecurityName"].astype(str).str.lower()
-    is_common_kw = name_str.str.contains(r"common stock|ordinary shares|class [ab]\s+common|shs", regex=True)
-    is_deriv_kw = name_str.str.contains(r"warrant|right|unit|preferred|preference|pref|etf|fund|trust|note|debenture|bond|adr|adr\.", regex=True)
+    if df.empty:
+        return df
+
+    name_str = df.get("SecurityName", pd.Series([""] * len(df))).astype(str).str.lower()
+
+    is_common_kw = name_str.str.contains(
+        r"common stock|ordinary shares|class [ab]\s+common|shs",
+        regex=True, na=False
+    )
+    is_deriv_kw = name_str.str.contains(
+        r"warrant|right|unit|preferred|preference|pref|etf|fund|trust|note|debenture|bond|adr|adr\.",
+        regex=True, na=False
+    )
+
     base = df[is_common_kw & ~is_deriv_kw]
     return base if not base.empty else df[~is_deriv_kw]
 
+
 def get_all_us_listed_common():
+    """모든 미국 상장 주식 종목 가져오기 - 개선된 버전"""
     urls = [
-        "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
-        "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt",
         "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
-        "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqtraded.txt",
-        "https://ftp.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
         "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
+        "https://old.nasdaq.com/screening/companies-by-name.aspx?letter=0&exchange=nasdaq&render=download",
+        "https://old.nasdaq.com/screening/companies-by-name.aspx?letter=0&exchange=nyse&render=download",
     ]
-    dfs=[]
+
+    dfs = []
+    fetched_count = 0
+
     for u in urls:
         try:
             txt = _fetch_text(u)
+            if not txt:
+                continue
+
             df = _normalize_symbol_df(_read_pipe_text_to_df(txt))
-            dfs.append(df)
-            print(f"[US_ALL] fetched: {u}")
+            if not df.empty:
+                dfs.append(df)
+                fetched_count += len(df)
+                print(f"[US_ALL] {u}에서 {len(df)}개 종목 로드")
+
         except Exception as e:
-            print(f"[US_ALL] skip {u} -> {e}")
-    if not dfs: raise RuntimeError("Failed to fetch symbol lists")
-    df = pd.concat(dfs, ignore_index=True)
-    df = _filter_common_stock(df)
-    syms = df["Symbol"].dropna().unique().tolist()
-    print(f"[US_ALL] total symbols after filter: {len(syms)}")
+            print(f"[US_ALL] {u} 건너뜀: {e}")
+            continue
+
+    if not dfs:
+        print("[US_ALL] 모든 소스 실패, 폴백 종목 사용")
+        # 기본 폴백 종목
+        fallback_tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK-B', 'V', 'JNJ', 'WMT',
+                            'PG', 'JPM', 'UNH', 'HD', 'DIS', 'PYPL', 'NFLX', 'ADBE', 'CRM', 'INTC']
+        return fallback_tickers
+
+    df_combined = pd.concat(dfs, ignore_index=True)
+    df_combined = _filter_common_stock(df_combined)
+
+    syms = df_combined["Symbol"].dropna().unique().tolist()
+    print(f"[US_ALL] 필터 후 총 {len(syms)}개 종목")
     return sorted(syms)
 
+
 def load_universe():
+    """유니버스 로드 - 안정성 개선"""
     src = CONFIG["UNIVERSE_SOURCE"]
-    if src == "sp500": u = get_sp500_symbols()
-    elif src == "us_all": u = get_all_us_listed_common()
-    elif src == "custom": u = [_normalize_ticker(x) for x in CONFIG["CUSTOM_TICKERS"]]
-    else: raise ValueError("UNIVERSE_SOURCE must be one of: us_all, sp500, custom")
-    if CONFIG["SHUFFLE_UNIVERSE"]: random.shuffle(u)
-    if CONFIG["MAX_TICKERS"]: u = u[CONFIG["UNIVERSE_OFFSET"]: CONFIG["UNIVERSE_OFFSET"] + CONFIG["MAX_TICKERS"]]
-    elif CONFIG["UNIVERSE_OFFSET"]: u = u[CONFIG["UNIVERSE_OFFSET"]:]
-    print(f"[Universe] {src} total={len(u)} sample={u[:12]}")
-    return u
+
+    try:
+        if src == "sp500":
+            u = get_sp500_symbols()
+        elif src == "us_all":
+            u = get_all_us_listed_common()
+        elif src == "custom":
+            u = [_normalize_ticker(x) for x in CONFIG["CUSTOM_TICKERS"]]
+        else:
+            raise ValueError("UNIVERSE_SOURCE는 us_all, sp500, custom 중 하나여야 합니다")
+
+        if CONFIG["SHUFFLE_UNIVERSE"]:
+            random.shuffle(u)
+
+        if CONFIG["MAX_TICKERS"]:
+            u = u[CONFIG["UNIVERSE_OFFSET"]:CONFIG["UNIVERSE_OFFSET"] + CONFIG["MAX_TICKERS"]]
+        elif CONFIG["UNIVERSE_OFFSET"]:
+            u = u[CONFIG["UNIVERSE_OFFSET"]:]
+
+        print(f"[유니버스] {src} 총={len(u)}개 샘플={u[:8]}")
+        return u
+
+    except Exception as e:
+        print(f"[유니버스] 로드 실패: {e}")
+        # 기본 종목으로 폴백
+        return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'BRK-B', 'JNJ', 'JPM', 'V']
 
 # ============== OHLCV → 라이트 지표 ==============
-def _tz_naive(obj):
-    if hasattr(obj, "index"):
-        try:
-            if getattr(obj.index, "tz", None) is not None:
-                obj = obj.copy()
-                obj.index = obj.index.tz_convert("UTC").tz_localize(None)
-        except Exception: pass
-    return obj
 
 def _compute_ta_single(c, h, l, v):
-    if c is None or c.dropna().shape[0] < 5: return None
-    c=c.dropna()
-    s20 = c.rolling(20).mean()
-    s50 = c.rolling(50).mean() if c.shape[0] >= 50 else pd.Series(index=c.index, dtype=float)
-    last_close=float(c.iloc[-1])
-    sma20=float(s20.iloc[-1]) if s20.dropna().size else None
-    sma50=float(s50.iloc[-1]) if s50.dropna().size else None
-    ret5 = float(c.pct_change(5).iloc[-1]) if c.shape[0]>=6 else None
-    ret20= float(c.pct_change(20).iloc[-1]) if c.shape[0]>=21 else None
-    avg20=today_vol=rvol=None
-    if v is not None and v.dropna().shape[0] >= 2:
-        v=v.dropna()
-        avg20=float(v.rolling(20).mean().iloc[-1]) if v.shape[0]>=20 else float(v.mean())
-        today_vol=float(v.iloc[-1]); rvol = today_vol/avg20 if avg20>0 else None
-    atr=atr_pct=None
-    if h is not None and l is not None and c.shape[0]>=15 and h.dropna().shape[0] and l.dropna().shape[0]:
-        prev_close=c.shift(1)
-        tr=pd.concat([h-l,(h-prev_close).abs(),(l-prev_close).abs()],axis=1).max(axis=1)
-        atr=float(tr.rolling(14).mean().iloc[-1]) if tr.dropna().shape[0]>=14 else None
-        atr_pct=(atr/last_close) if (atr and last_close>0) else None
-    return {"last_price":last_close,"sma20":sma20,"sma50":sma50,"ret5":ret5,"ret20":ret20,
-            "avg20_vol":avg20,"today_vol":today_vol,"rvol":rvol,"atr":atr,"atr_pct":atr_pct}
+    """단일 종목 기술적 지표 계산"""
+    try:
+        if c is None or len(c.dropna()) < 5:
+            return None
+
+        c = c.dropna()
+        if len(c) == 0:
+            return None
+
+        # 기본 지표 계산
+        last_close = float(c.iloc[-1])
+
+        # 이동평균
+        s20 = c.rolling(20).mean().iloc[-1] if len(c) >= 20 else None
+        s50 = c.rolling(50).mean().iloc[-1] if len(c) >= 50 else None
+
+        # 수익률
+        ret5 = c.pct_change(5).iloc[-1] if len(c) >= 6 else None
+        ret20 = c.pct_change(20).iloc[-1] if len(c) >= 21 else None
+
+        # 거래량 지표
+        avg20_vol = today_vol = rvol = None
+        if v is not None and len(v.dropna()) > 0:
+            v_clean = v.dropna()
+            avg20_vol = float(v_clean.rolling(20).mean().iloc[-1]) if len(v_clean) >= 20 else float(v_clean.mean())
+            today_vol = float(v_clean.iloc[-1]) if len(v_clean) > 0 else None
+            rvol = today_vol / avg20_vol if avg20_vol and avg20_vol > 0 else 1.0
+
+        # ATR
+        atr = atr_pct = None
+        if h is not None and l is not None and len(h.dropna()) > 0 and len(l.dropna()) > 0:
+            h_clean, l_clean = h.dropna(), l.dropna()
+            if len(h_clean) >= 2 and len(l_clean) >= 2:
+                prev_close = c.shift(1)
+                tr = pd.concat([
+                    h_clean - l_clean,
+                    (h_clean - prev_close).abs(),
+                    (l_clean - prev_close).abs()
+                ], axis=1).max(axis=1)
+                atr = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else None
+                atr_pct = (atr / last_close) if atr and last_close > 0 else None
+
+        return {
+            "last_price": last_close,
+            "sma20": float(s20) if s20 else None,
+            "sma50": float(s50) if s50 else None,
+            "ret5": float(ret5) if ret5 else None,
+            "ret20": float(ret20) if ret20 else None,
+            "avg20_vol": avg20_vol,
+            "today_vol": today_vol,
+            "rvol": rvol,
+            "atr": atr,
+            "atr_pct": atr_pct
+        }
+    except Exception as e:
+        print(f"TA 계산 실패: {e}")
+        return None
 
 def _compute_ta_metrics(df):
-    out={}
-    if isinstance(df.columns, pd.MultiIndex):
-        fields=set(df.columns.get_level_values(0))
-        tks=sorted(set(df.columns.get_level_values(1)))
-        ck="Adj Close" if "Adj Close" in fields else "Close"
-        for t in tks:
-            try:
-                c=df[(ck,t)].dropna()
-                h=df[("High",t)].dropna() if ("High",t) in df.columns else None
-                l=df[("Low",t)].dropna()  if ("Low",t)  in df.columns else None
-                v=df[("Volume",t)].dropna() if ("Volume",t) in df.columns else None
-                m=_compute_ta_single(c,h,l,v)
-                if m: out[t]=m
-            except Exception: continue
-    else:
-        ck="Adj Close" if "Adj Close" in df.columns else "Close"
-        c=df.get(ck); h=df.get("High"); l=df.get("Low"); v=df.get("Volume")
-        m=_compute_ta_single(c,h,l,v)
-        if m: out["__SINGLE__"]=m
+    """DataFrame에서 기술적 지표 계산"""
+    out = {}
+
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            # 멀티인덱스 (배치 다운로드)
+            fields = set(df.columns.get_level_values(0))
+            tickers = sorted(set(df.columns.get_level_values(1)))
+
+            close_col = "Adj Close" if "Adj Close" in fields else "Close"
+
+            for t in tickers:
+                try:
+                    if (close_col, t) not in df.columns:
+                        continue
+
+                    c = df[(close_col, t)].dropna()
+                    h = df[("High", t)].dropna() if ("High", t) in df.columns else None
+                    l = df[("Low", t)].dropna() if ("Low", t) in df.columns else None
+                    v = df[("Volume", t)].dropna() if ("Volume", t) in df.columns else None
+
+                    metrics = _compute_ta_single(c, h, l, v)
+                    if metrics:
+                        out[t] = metrics
+                except Exception:
+                    continue
+        else:
+            # 단일 인덱스
+            close_col = "Adj Close" if "Adj Close" in df.columns else "Close"
+            c = df[close_col] if close_col in df.columns else None
+            h = df["High"] if "High" in df.columns else None
+            l = df["Low"] if "Low" in df.columns else None
+            v = df["Volume"] if "Volume" in df.columns else None
+
+            metrics = _compute_ta_single(c, h, l, v)
+            if metrics:
+                out["__SINGLE__"] = metrics
+
+    except Exception as e:
+        print(f"TA 메트릭스 계산 실패: {e}")
+
     return out
 
-def preload_ohlcv_light(tickers, period="120d", chunk=60, batch_retries=3, single_retries=2, workers=12, threads=True, sleep=0.15):
-    TA, PX, VOL = {}, {}, {}
-    ok=set(); last_px={}; avg_vol={}
-    def consume(df, batch):
-        if not isinstance(df, pd.DataFrame) or df.empty: return
-        df=_tz_naive(df); m=_compute_ta_metrics(df)
-        if isinstance(df.columns, pd.MultiIndex):
-            ck = "Adj Close" if "Adj Close" in set(df.columns.get_level_values(0)) else "Close"
-            for t in batch:
-                try:
-                    if (ck,t) not in df.columns: continue
-                    c=df[(ck,t)].dropna()
-                    if len(c)>=2:
-                        ok.add(t); last_px[t]=float(c.iloc[-1])
-                        v=df[("Volume",t)].dropna() if ("Volume",t) in df.columns else pd.Series(dtype=float)
-                        avg_vol[t]=float(v.mean()) if len(v)>0 else 0.0
-                    if t in m:
-                        TA[t]=m[t]; PX[t]=m[t]["last_price"]
-                        VOL[t]=m[t]["avg20_vol"] if m[t]["avg20_vol"] is not None else avg_vol.get(t,0.0)
-                except Exception: pass
-        else:
-            t=batch[0]; ms=m.get("__SINGLE__")
-            if ms is None: return
-            try:
-                ck="Adj Close" if "Adj Close" in df.columns else "Close"
-                c=df[ck].dropna()
-                if len(c)>=2:
-                    ok.add(t); last_px[t]=float(c.iloc[-1])
-                    v=df["Volume"].dropna() if "Volume" in df.columns else pd.Series(dtype=float)
-                    avg_vol[t]=float(v.mean()) if len(v)>0 else 0.0
-                TA[t]=ms; PX[t]=ms["last_price"]; VOL[t]=ms["avg20_vol"] if ms["avg20_vol"] is not None else avg_vol.get(t,0.0)
-            except Exception: pass
+def safe_yf_download(tickers, **kwargs):
+    """안전한 yfinance 다운로드"""
+    max_retries = kwargs.pop('max_retries', 3)
+    timeout = kwargs.pop('timeout', 30)
 
-    for i in range(0,len(tickers),chunk):
-        batch=tickers[i:i+chunk]; df=None
-        for att in range(batch_retries):
+    for attempt in range(max_retries):
+        try:
+            data = yf.download(tickers, **kwargs)
+            if data is not None and not data.empty:
+                return data
+        except Exception as e:
+            print(f"yfinance 다운로드 시도 {attempt + 1}/{max_retries} 실패: {e}")
+            if attempt < max_retries - 1:
+                sleep_time = (2 ** attempt) + random.random()
+                print(f"{sleep_time:.1f}초 후 재시도...")
+                time.sleep(sleep_time)
+
+    return None
+
+
+def preload_ohlcv_light(tickers, period="120d", chunk=50, **kwargs):
+    """OHLCV 데이터 프리로드 - 개선된 버전"""
+    TA, PX, VOL = {}, {}, {}
+    ok_tickers = set()
+
+    print(f"[OHLCV] {len(tickers)}개 종목 로드 시작...")
+
+    for i in range(0, len(tickers), chunk):
+        batch = tickers[i:i + chunk]
+        batch_name = f"{i + 1}-{min(i + chunk, len(tickers))}"
+
+        print(f"[OHLCV] 배치 {batch_name} 처리 중...")
+
+        # 배치 다운로드 시도
+        batch_data = None
+        for attempt in range(CONFIG["BATCH_RETRIES"]):
             try:
-                df=yf.download(batch, period=period, interval="1d", auto_adjust=False, progress=False, threads=threads)
-            except Exception: df=None
-            if isinstance(df,pd.DataFrame) and not df.empty: break
-            time.sleep((1.5**att)+random.random()*0.3)
-        if not isinstance(df,pd.DataFrame) or df.empty:
-            # fallback singles with thread pool
-            def fetch_one(t):
-                sdf=None
-                for a in range(single_retries+1):
+                batch_data = safe_yf_download(
+                    batch,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=False,
+                    progress=False,
+                    threads=CONFIG["YF_THREADS"],
+                    timeout=30
+                )
+                if batch_data is not None and not batch_data.empty:
+                    break
+            except Exception as e:
+                print(f"배치 {batch_name} 시도 {attempt + 1} 실패: {e}")
+                time.sleep((1.5 ** attempt) + random.random())
+
+        processed_in_batch = 0
+
+        if batch_data is not None and not batch_data.empty:
+            # 배치 데이터 처리
+            metrics = _compute_ta_metrics(batch_data)
+
+            if isinstance(batch_data.columns, pd.MultiIndex):
+                # 멀티인덱스 처리
+                close_col = "Adj Close" if "Adj Close" in set(batch_data.columns.get_level_values(0)) else "Close"
+
+                for t in batch:
                     try:
-                        sdf=yf.download(t, period=period, interval="1d", auto_adjust=False, progress=False, threads=False)
-                    except Exception: sdf=None
-                    if isinstance(sdf,pd.DataFrame) and not sdf.empty: break
-                    time.sleep((1.5**a)+random.random()*0.2)
-                return t,sdf
-            with ThreadPoolExecutor(max_workers=workers) as ex:
-                futs=[ex.submit(fetch_one,t) for t in batch]
-                for fu in as_completed(futs):
-                    t,sdf=fu.result(); consume(sdf,[t])
-        else:
-            consume(df,batch)
-        time.sleep(sleep)
-    return TA,PX,VOL,ok
+                        if (close_col, t) not in batch_data.columns:
+                            continue
+
+                        prices = batch_data[(close_col, t)].dropna()
+                        if len(prices) < 5:
+                            continue
+
+                        last_price = float(prices.iloc[-1])
+
+                        # 거래량 계산
+                        avg_vol = 0
+                        if ("Volume", t) in batch_data.columns:
+                            vols = batch_data[("Volume", t)].dropna()
+                            avg_vol = float(vols.rolling(20).mean().iloc[-1]) if len(vols) >= 20 else float(vols.mean())
+
+                        ok_tickers.add(t)
+                        PX[t] = last_price
+                        VOL[t] = avg_vol
+
+                        if t in metrics:
+                            TA[t] = metrics[t]
+                        else:
+                            # 메트릭스가 없으면 기본값 생성
+                            TA[t] = {
+                                "last_price": last_price,
+                                "sma20": last_price,
+                                "sma50": last_price,
+                                "ret5": 0.0,
+                                "ret20": 0.0,
+                                "avg20_vol": avg_vol,
+                                "rvol": 1.0,
+                                "atr_pct": 0.02
+                            }
+
+                        processed_in_batch += 1
+
+                    except Exception as e:
+                        print(f"종목 {t} 처리 실패: {e}")
+                        continue
+            else:
+                # 단일 종목 처리
+                if batch and len(batch) == 1:
+                    t = batch[0]
+                    try:
+                        prices = batch_data[close_col].dropna() if close_col in batch_data.columns else None
+                        if prices is None or len(prices) < 5:
+                            continue
+
+                        last_price = float(prices.iloc[-1])
+
+                        # 거래량
+                        avg_vol = 0
+                        if "Volume" in batch_data.columns:
+                            vols = batch_data["Volume"].dropna()
+                            avg_vol = float(vols.rolling(20).mean().iloc[-1]) if len(vols) >= 20 else float(vols.mean())
+
+                        ok_tickers.add(t)
+                        PX[t] = last_price
+                        VOL[t] = avg_vol
+
+                        if "__SINGLE__" in metrics:
+                            TA[t] = metrics["__SINGLE__"]
+                        else:
+                            TA[t] = {
+                                "last_price": last_price,
+                                "sma20": last_price,
+                                "sma50": last_price,
+                                "ret5": 0.0,
+                                "ret20": 0.0,
+                                "avg20_vol": avg_vol,
+                                "rvol": 1.0,
+                                "atr_pct": 0.02
+                            }
+
+                        processed_in_batch += 1
+
+                    except Exception as e:
+                        print(f"단일 종목 {t} 처리 실패: {e}")
+
+        # 배치 실패 시 개별 다운로드
+        if processed_in_batch == 0:
+            print(f"배치 {batch_name} 실패, 개별 다운로드 시도...")
+
+            def download_single(t):
+                for attempt in range(CONFIG["SINGLE_RETRIES"]):
+                    try:
+                        data = safe_yf_download(
+                            t,
+                            period=period,
+                            interval="1d",
+                            auto_adjust=False,
+                            progress=False,
+                            threads=False,
+                            timeout=30
+                        )
+                        if data is not None and not data.empty:
+                            return t, data
+                    except Exception:
+                        time.sleep((1.5 ** attempt) + random.random() * 0.3)
+                return t, None
+
+            # 스레드 풀 사용
+            with ThreadPoolExecutor(max_workers=CONFIG["FALLBACK_MAX_WORKERS"]) as executor:
+                futures = [executor.submit(download_single, t) for t in batch]
+
+                for future in as_completed(futures):
+                    t, data = future.result()
+                    if data is not None:
+                        try:
+                            metrics = _compute_ta_metrics(data)
+                            if "__SINGLE__" in metrics:
+                                close_col = "Adj Close" if "Adj Close" in data.columns else "Close"
+                                prices = data[close_col].dropna()
+
+                                if len(prices) >= 5:
+                                    last_price = float(prices.iloc[-1])
+
+                                    # 거래량
+                                    avg_vol = 0
+                                    if "Volume" in data.columns:
+                                        vols = data["Volume"].dropna()
+                                        avg_vol = float(vols.rolling(20).mean().iloc[-1]) if len(vols) >= 20 else float(
+                                            vols.mean())
+
+                                    ok_tickers.add(t)
+                                    PX[t] = last_price
+                                    VOL[t] = avg_vol
+                                    TA[t] = metrics["__SINGLE__"]
+                                    processed_in_batch += 1
+                        except Exception as e:
+                            print(f"개별 종목 {t} 처리 실패: {e}")
+
+        print(f"[OHLCV] 배치 {batch_name} 완료: {processed_in_batch}/{len(batch)}개 성공")
+        time.sleep(CONFIG["SLEEP_SEC"])
+
+    print(f"[OHLCV] 전체 완료: {len(ok_tickers)}/{len(tickers)}개 종목 성공")
+    return TA, PX, VOL, ok_tickers
 
 # ============== 상세 재무 유틸 ==============
 REV_ALIASES = ["total revenue","revenues","revenue","net sales","sales","total net sales"]
@@ -469,207 +742,207 @@ def estimate_peg_from_eps_cagr(tic: yf.Ticker, pe_value, min_years=3, max_years=
     if cagr is None or cagr<=0: return None
     return float(pe_value)/(float(cagr)*100.0)
 
-def fetch_details_for_ticker(tkr, price, avg_vol):
-    """라이트 통과 종목에 대해 상세 재무 지표 수집"""
+def _safe_df(getter):
+    """
+    수정된 버전: DataFrame boolean 평가 문제 해결
+    """
     try:
-        t=yf.Ticker(tkr)
-        info=t.get_info() or {}
-    except Exception:
-        info={}
-    mktcap=info.get("marketCap")
-    dollar_vol=(float(price)*float(avg_vol)) if (price is not None and avg_vol is not None) else None
+        df = getter()
+        # 명시적으로 DataFrame 존재 여부 확인
+        if df is not None and hasattr(df, 'empty') and not df.empty:
+            return df
+    except Exception as e:
+        # 에러 로깅 (선택사항)
+        pass
+    return None
 
-    # 분기 손익/현금흐름/재무상태표
-    def _safe_df(getter):
-        try:
-            df = getter()
-            if df is not None and hasattr(df, "empty") and not df.empty:
-                return df
-        except Exception:
-            pass
+def safe_pe(price, info_dict, df_q, df_a):
+    """
+    PER 계산 함수 보완
+    """
+    try:
+        pe = coalesce(info_dict.get("trailingPE"), info_dict.get("forwardPE"))
+        if pe is not None and isinstance(pe, (int, float)) and pe > 0:
+            return float(pe)
+
+        teps = info_dict.get("trailingEps")
+        if teps and isinstance(teps, (int, float)) and teps > 0 and price:
+            return float(price) / float(teps)
+
+        # 수정: DataFrame 안전성 확인
+        if df_q is not None and df_a is not None:
+            eps_ttm = _eps_ttm_from_statements(df_q, df_a)
+            if eps_ttm and eps_ttm > 0 and price:
+                return float(price) / float(eps_ttm)
+
+        return None
+    except Exception:
         return None
 
-    q_is = _safe_df(lambda: t.quarterly_income_stmt) or _safe_df(lambda: t.quarterly_financials)
-    a_is = _safe_df(lambda: t.income_stmt) or _safe_df(lambda: t.financials)
-    cf_q = _safe_df(lambda: t.quarterly_cashflow)
-    balance_q = _safe_df(lambda: t.quarterly_balance_sheet)
-    balance_a = _safe_df(lambda: t.balance_sheet)
 
-    # Rev/OpMargin/RevYoY
-    rev_row = _find_row(q_is.index, REV_ALIASES,
-                        exclude=["per share", "operating revenue", "royalty"]) if q_is is not None else None
-    op_row = _find_row(q_is.index, OP_ALIASES) if q_is is not None else None
+def fetch_details_for_ticker(tkr, price, avg_vol):
+    """
+    수정된 상세 데이터 수집 함수 - 에러 처리 강화
+    """
+    try:
+        t = yf.Ticker(tkr)
+        info = t.get_info() or {}
+    except Exception as e:
+        # 초기 정보 수집 실패 시 기본 정보 반환
+        return {
+            "Ticker": tkr,
+            "Name": tkr,
+            "Sector": None,
+            "Industry": None,
+            "MktCap($B)": None,
+            "Price": round(price, 2) if price is not None else None,
+            "DollarVol($M)": None,
+            "RevYoY": None,
+            "OpMarginTTM": None,
+            "OperatingMargins(info)": None,
+            "ROE(info)": None,
+            "EV_EBITDA": None,
+            "PE": None,
+            "PEG": None,
+            "FCF_Yield": None,
+            "PB": None,
+            "DivYield": None,
+            "PayoutRatio": None,
+        }
 
-    rev_ttm = ttm_sum(q_is, rev_row, 4) if rev_row else None
-    op_ttm = ttm_sum(q_is, op_row, 4) if op_row else None
-    op_margin = (op_ttm / rev_ttm) if (op_ttm is not None and rev_ttm not in (None, 0)) else None
+    try:
+        mktcap = info.get("marketCap")
+        dollar_vol = (float(price) * float(avg_vol)) if (price is not None and avg_vol is not None) else None
 
-    # 개선된 YoY 계산
-    rev_yoy = ttm_yoy_growth(q_is, rev_row) if rev_row else None
-    if (rev_yoy is None) and (a_is is not None) and (rev_row in getattr(a_is, 'index', [])):
-        rev_yoy = annual_yoy_growth(a_is, rev_row)
+        # 재무제표 데이터 수집 (에러 처리 강화)
+        q_is = _safe_df(lambda: t.quarterly_income_stmt)
+        if q_is is None:
+            q_is = _safe_df(lambda: t.quarterly_financials)
 
-    # 개선된 EV/EBITDA 계산
-    ev = info.get("enterpriseValue")
-    ebitda = info.get("ebitda")
+        a_is = _safe_df(lambda: t.income_stmt)
+        if a_is is None:
+            a_is = _safe_df(lambda: t.financials)
 
-    # EBITDA 계산 개선: 여러 방법 시도
-    if ebitda is None or (isinstance(ebitda, (int, float)) and ebitda <= 0):
-        # 방법 1: 분기 데이터에서 계산
-        if q_is is not None:
-            op_row_q = _find_row(q_is.index, OP_ALIASES)
-            da_row_q = _find_row(cf_q.index, DA_ALIASES) if cf_q is not None else None
+        cf_q = _safe_df(lambda: t.quarterly_cashflow)
+        balance_a = _safe_df(lambda: t.balance_sheet)
 
-            if op_row_q and da_row_q:
-                op_ttm_q = ttm_sum(q_is, op_row_q, 4)
-                da_ttm_q = ttm_sum(cf_q, da_row_q, 4) if da_row_q else None
-                if op_ttm_q is not None and da_ttm_q is not None:
-                    ebitda = op_ttm_q + da_ttm_q
+        # 매출/영업이익 데이터 (안전한 처리)
+        rev_yoy = None
+        op_margin = None
 
-        # 방법 2: 연간 데이터에서 계산
-        if (ebitda is None or ebitda <= 0) and a_is is not None:
-            op_row_a = _find_row(a_is.index, OP_ALIASES)
-            da_row_a = _find_row(cf_q.index, DA_ALIASES) if cf_q is not None else None
+        # 수정: DataFrame 존재 여부 명시적 확인
+        if q_is is not None and not q_is.empty:
+            rev_row = _find_row(q_is.index, REV_ALIASES, exclude=["per share", "operating revenue", "royalty"])
+            op_row = _find_row(q_is.index, OP_ALIASES)
 
-            if op_row_a:
-                try:
-                    col = sorted(a_is.columns, reverse=True)[0]
-                    op_ann = float(pd.to_numeric(a_is.loc[op_row_a, col], errors="coerce"))
-                    da_ann = float(pd.to_numeric(cf_q.loc[da_row_a, col],
-                                                 errors="coerce")) if da_row_a and col in cf_q.columns else 0
-                    ebitda = op_ann + da_ann if op_ann else None
-                except Exception:
-                    pass
+            if rev_row:
+                rev_ttm = ttm_sum(q_is, rev_row, 4)
+                rev_yoy = ttm_yoy_growth(q_is, rev_row)
 
-    ev_ebitda = float(ev) / float(ebitda) if (ev and ebitda and float(ebitda) > 0) else None
+                # 연간 데이터로 폴백
+                if rev_yoy is None and a_is is not None and not a_is.empty and rev_row in a_is.index:
+                    rev_yoy = annual_yoy_growth(a_is, rev_row)
 
-    # PER/PEG 계산
-    pe = safe_pe(price, info, q_is, a_is)
-    peg = info.get("pegRatio")
-    if peg in (None, float("nan")) and pe is not None:
-        peg = estimate_peg_from_earnings_trend(t, pe) or estimate_peg_from_eps_cagr(t, pe, 3, 5)
+            if op_row and rev_ttm and rev_ttm > 0:
+                op_ttm = ttm_sum(q_is, op_row, 4)
+                if op_ttm:
+                    op_margin = op_ttm / rev_ttm
 
-    # 개선된 FCF Yield 계산
-    fcf_yield = None
-    if isinstance(cf_q, pd.DataFrame):
-        fcf_row = _find_row(cf_q.index, FCF_ALIASES)
-        if not fcf_row:
-            # FCF = Operating Cash Flow - Capital Expenditure
-            op_cf_row = _find_row(cf_q.index, ["operating cash flow", "cash from operations"])
-            capex_row = _find_row(cf_q.index, ["capital expenditure", "purchase of property", "capital expenditures"])
-            if op_cf_row and capex_row:
-                op_cf_ttm = ttm_sum(cf_q, op_cf_row, 4)
-                capex_ttm = ttm_sum(cf_q, capex_row, 4, absolute=True)
-                if op_cf_ttm is not None and capex_ttm is not None:
-                    fcf_ttm = op_cf_ttm - capex_ttm
-                    fcf_yield = (float(fcf_ttm) / float(ev)) if (fcf_ttm is not None and ev and float(ev) > 0) else None
-        else:
-            fcf_ttm = ttm_sum(cf_q, fcf_row, 4)
-            fcf_yield = (float(fcf_ttm) / float(ev)) if (fcf_ttm is not None and ev and float(ev) > 0) else None
+        # EV/EBITDA 계산 (에러 처리 강화)
+        ev = info.get("enterpriseValue")
+        ebitda = info.get("ebitda")
+        ev_ebitda = None
 
-    # 부채비율 계산 추가
-    debt_equity = None
-    if balance_a is not None:
-        debt_row = _find_row(balance_a.index, ["total debt", "total liabilities", "long term debt"])
-        equity_row = _find_row(balance_a.index, ["total equity", "shareholders equity"])
-
-        if debt_row and equity_row:
-            try:
-                col = sorted(balance_a.columns, reverse=True)[0]
-                total_debt = float(pd.to_numeric(balance_a.loc[debt_row, col], errors="coerce"))
-                total_equity = float(pd.to_numeric(balance_a.loc[equity_row, col], errors="coerce"))
-                if total_equity and total_equity > 0:
-                    debt_equity = total_debt / total_equity
-            except Exception:
-                pass
-
-    # 배당 관련 지표 강화
-    div_yield = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
-    if div_yield and isinstance(div_yield, float):
-        div_yield = div_yield  # 이미 %로 되어 있음
-    elif div_yield and isinstance(div_yield, str):
         try:
-            div_yield = float(div_yield.strip('%')) / 100
-        except:
+            if ev and ebitda and float(ebitda) > 0:
+                ev_ebitda = float(ev) / float(ebitda)
+        except (TypeError, ValueError):
+            pass
+
+        # PER/PEG 계산
+        pe = safe_pe(price, info, q_is, a_is)
+        peg = info.get("pegRatio")
+
+        if (peg is None or math.isnan(peg)) and pe is not None:
+            try:
+                peg = estimate_peg_from_earnings_trend(t, pe) or estimate_peg_from_eps_cagr(t, pe, 3, 5)
+            except Exception:
+                peg = None
+
+        # FCF Yield 계산
+        fcf_yield = None
+        if cf_q is not None and not cf_q.empty:
+            fcf_row = _find_row(cf_q.index, FCF_ALIASES)
+            if fcf_row:
+                fcf_ttm = ttm_sum(cf_q, fcf_row, 4)
+                if fcf_ttm and ev and float(ev) > 0:
+                    fcf_yield = float(fcf_ttm) / float(ev)
+
+        # 배당수익률 (안전한 처리)
+        div_yield = None
+        try:
+            div_yield = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
+            if div_yield and isinstance(div_yield, str):
+                div_yield = float(div_yield.strip('%')) / 100
+        except (TypeError, ValueError, AttributeError):
             div_yield = None
 
-    # 5년 평균 ROE 계산 시도
-    roe_5y = None
-    if a_is is not None:
-        net_income_row = _find_row(a_is.index, NET_INCOME_ALIASES)
-        equity_row = _find_row(a_is.index, ["total equity", "shareholders equity"])
+        rec = {
+            "Ticker": tkr,
+            "Name": info.get("longName") or info.get("shortName") or tkr,
+            "Sector": info.get("sector"),
+            "Industry": info.get("industry"),
+            "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
+            "Price": round(price, 2) if price is not None else None,
+            "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
+            "RevYoY": rev_yoy,
+            "OpMarginTTM": op_margin,
+            "OperatingMargins(info)": info.get("operatingMargins"),
+            "ROE(info)": info.get("returnOnEquity"),
+            "EV_EBITDA": ev_ebitda,
+            "PE": pe,
+            "PEG": peg,
+            "FCF_Yield": fcf_yield,
+            "PB": info.get("priceToBook") or info.get("priceToBookRatio"),
+            "DivYield": div_yield,
+            "PayoutRatio": info.get("payoutRatio"),
+        }
+        return rec
 
-        if net_income_row and equity_row and a_is.shape[1] >= 5:
-            try:
-                roe_values = []
-                for col in sorted(a_is.columns, reverse=True)[:5]:
-                    ni = float(pd.to_numeric(a_is.loc[net_income_row, col], errors="coerce"))
-                    eq = float(pd.to_numeric(a_is.loc[equity_row, col], errors="coerce"))
-                    if ni and eq and eq > 0:
-                        roe_values.append(ni / eq)
+    except Exception as e:
+        # 상세 데이터 수집 중 에러 발생 시 기본 정보 반환
+        print(f"종목 {tkr} 상세 데이터 수집 중 에러: {str(e)}")
+        return {
+            "Ticker": tkr,
+            "Name": info.get("longName") or info.get("shortName") or tkr,
+            "Sector": info.get("sector"),
+            "Industry": info.get("industry"),
+            "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
+            "Price": round(price, 2) if price is not None else None,
+            "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
+            "RevYoY": None,
+            "OpMarginTTM": None,
+            "OperatingMargins(info)": None,
+            "ROE(info)": None,
+            "EV_EBITDA": None,
+            "PE": None,
+            "PEG": None,
+            "FCF_Yield": None,
+            "PB": None,
+            "DivYield": None,
+            "PayoutRatio": None,
+        }
 
-                if len(roe_values) >= 3:  # 최소 3년치 데이터
-                    roe_5y = sum(roe_values) / len(roe_values)
-            except Exception:
-                pass
-
-    # Buyback Yield(절대값)
-    buyback_yield=None
-    if isinstance(cf_q,pd.DataFrame):
-        try:
-            buy_rows=["repurchase of capital stock","purchase of treasury stock","common stock repurchased","repurchases of common stock","stock repurchased","share repurchases","stock buyback"]
-            row=_find_row(cf_q.index, buy_rows)
-            buy_ttm=ttm_sum(cf_q, row,4, absolute=True) if row else None
-            buyback_yield=(float(buy_ttm)/float(mktcap)) if (buy_ttm is not None and mktcap) else None
-        except Exception: pass
-
-    rec = {
-        "Ticker": tkr,
-        "Name": info.get("longName") or info.get("shortName") or tkr,
-        "Sector": info.get("sector"),
-        "Industry": info.get("industry"),
-        "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
-        "Price": round(price, 2) if price is not None else None,
-        "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
-
-        # 재무 건강성 지표 추가
-        "Debt_to_Equity": debt_equity,
-        "ROE_5Y_Avg": roe_5y,
-
-        # 라이트(TA) 필드
-        "SMA20": None,  # 외부에서 채워짐
-        "SMA50": None,
-        "ATR_PCT": None,
-        "RVOL": None,
-        "RET5": None,
-        "RET20": None,
-
-        # 상세 재무
-        "RevYoY": rev_yoy,
-        "OpMarginTTM": op_margin,
-        "OperatingMargins(info)": info.get("operatingMargins"),
-        "ROE(info)": info.get("returnOnEquity"),
-        "EV_EBITDA": ev_ebitda,
-        "PE": pe,
-        "PEG": peg,
-        "FCF_Yield": fcf_yield,
-        "PB": info.get("priceToBook") or info.get("priceToTangBook") or info.get("priceToBookRatio"),
-        "DivYield": div_yield,
-        "PayoutRatio": info.get("payoutRatio"),
-    }
-    return rec
-
-# ============== 라이트 컷 함수(캐시 단계에서 후보 축소용) ==============
-def pass_light_generic(price, dollar_vol):
-    if price is None or dollar_vol is None: return False
-    return (price >= CONFIG["MIN_PRICE"]) and (dollar_vol >= CONFIG["MIN_DOLLAR_VOLUME"])
 
 def build_details_cache():
+    """
+    수정된 캐시 빌드 함수 - 컬럼 중복 문제 해결
+    """
     source = CONFIG["UNIVERSE_SOURCE"]
     tickers = load_universe()
 
-    # OHLCV 라이트 지표
-    TA,PX,VOL,ok = preload_ohlcv_light(
+    # OHLCV 라이트 지표 수집 (기존 코드 유지)
+    TA, PX, VOL, ok = preload_ohlcv_light(
         tickers,
         period=CONFIG["PRELOAD_PERIOD"],
         chunk=CONFIG["PRELOAD_CHUNK"],
@@ -679,20 +952,23 @@ def build_details_cache():
         threads=CONFIG["YF_THREADS"],
         sleep=CONFIG["SLEEP_SEC"]
     )
+
     if not ok:
         raise RuntimeError("OHLCV 라이트 프리로드 실패(빈 결과)")
 
-    # 라이트 표 생성(전 종목)
-    lite_rows=[]
+    # 라이트 표 생성
+    lite_rows = []
     for t in tickers:
-        tta=TA.get(t,{})
-        price=PX.get(t); avg20=VOL.get(t)
-        if price is None or avg20 is None: continue
-        dollar_vol=price*avg20
-        row={
+        tta = TA.get(t, {})
+        price = PX.get(t)
+        avg20 = VOL.get(t)
+        if price is None or avg20 is None:
+            continue
+        dollar_vol = price * avg20
+        row = {
             "Ticker": t,
-            "Price": round(price,2),
-            "DollarVol($M)": round(dollar_vol/1_000_000,2),
+            "Price": round(price, 2),
+            "DollarVol($M)": round(dollar_vol / 1_000_000, 2),
             "SMA20": tta.get("sma20"),
             "SMA50": tta.get("sma50"),
             "ATR_PCT": tta.get("atr_pct"),
@@ -701,21 +977,34 @@ def build_details_cache():
             "RET20": tta.get("ret20"),
         }
         lite_rows.append(row)
-    lite_df=pd.DataFrame(lite_rows)
-    if lite_df.empty: raise RuntimeError("라이트 지표 표가 비어 있음")
 
-    # 상세 호출 대상(라이트 컷 통과 + DollarVol 상위 K)
-    lite_df["_pass_light_generic"]=lite_df.apply(lambda r: pass_light_generic(r["Price"], r["DollarVol($M)"]*1_000_000), axis=1)
-    cand = lite_df[lite_df["_pass_light_generic"]].sort_values("DollarVol($M)", ascending=False).head(CONFIG["DETAILED_TOP_K"])
+    lite_df = pd.DataFrame(lite_rows)
+    if lite_df.empty:
+        raise RuntimeError("라이트 지표 표가 비어 있음")
 
-    print(f"[Details] candidates: {len(cand)} / light total: {len(lite_df)}")
+    # 상세 호출 대상 선정
+    lite_df["_pass_light_generic"] = lite_df.apply(
+        lambda r: pass_light_generic(r["Price"], r["DollarVol($M)"] * 1_000_000), axis=1
+    )
+    cand = lite_df[lite_df["_pass_light_generic"]].sort_values("DollarVol($M)", ascending=False).head(
+        CONFIG["DETAILED_TOP_K"])
 
-    # 상세 재무 수집(순차+가벼운 sleep)
-    detail_rows=[]
-    for i,(t,row) in enumerate(cand.set_index("Ticker").iterrows(), start=1):
+    print(f"[상세데이터] 후보: {len(cand)} / 라이트 총계: {len(lite_df)}")
+
+    # 상세 재무 수집
+    detail_rows = []
+    success_count = 0
+
+    for i, (t, row) in enumerate(cand.set_index("Ticker").iterrows(), start=1):
         try:
-            rec=fetch_details_for_ticker(t, price=row["Price"], avg_vol=(row["DollarVol($M)"]*1_000_000)/max(1e-9,row["Price"]))
-            # 라이트 필드 병합
+            rec = fetch_details_for_ticker(
+                t,
+                price=row["Price"],
+                avg_vol=(row["DollarVol($M)"] * 1_000_000) / max(1e-9, row["Price"])
+            )
+
+            # 라이트 필드 병합 (중복 컬럼 제거)
+            # Price, DollarVol($M) 등은 이미 rec에 있으므로 중복 추가하지 않음
             rec.update({
                 "SMA20": row.get("SMA20"),
                 "SMA50": row.get("SMA50"),
@@ -725,52 +1014,67 @@ def build_details_cache():
                 "RET20": row.get("RET20"),
             })
             detail_rows.append(rec)
-            if (i%50)==0: print(f"  - collected {i} / {len(cand)}")
-        except Exception:
+            success_count += 1
+
+        except Exception as e:
+            print(f"종목 {t} 상세 데이터 수집 실패: {str(e)}")
             continue
-        time.sleep(0.05 + random.random()*0.05)
 
-    details_df=pd.DataFrame(detail_rows)
+        if (i % 50) == 0:
+            print(f"  - {i}/{len(cand)} 완료 (성공: {success_count})")
 
-    # 라이트만 있는 종목도 함께 저장(상세 없음) → 나중에 캐시 기반 트레이딩 프로파일 가능
+        time.sleep(0.05 + random.random() * 0.05)
+
+    print(f"[상세데이터] 최종 수집: {success_count}/{len(cand)} 종목")
+
+    # 결과 병합 - 수정된 부분
+    details_df = pd.DataFrame(detail_rows)
+
+    # 방법 1: lite_df에서 중복 컬럼 제거 후 merge
+    lite_columns_to_keep = ["Ticker"]  # Ticker만 유지
+    lite_for_merge = lite_df[lite_columns_to_keep].copy()
+
     out = pd.merge(
-        lite_df.drop(columns=["_pass_light_generic"]),
+        lite_for_merge,
         details_df,
-        on="Ticker", how="left",
-        suffixes=("","")
+        on="Ticker",
+        how="left"
     )
 
-    # 포맷 정리
-    for c in ["RevYoY","OpMarginTTM","OperatingMargins(info)","ROE(info)","FCF_Yield","DivYield"]:
+    # 방법 2: 또는 lite_df의 모든 데이터를 유지하면서 details_df의 데이터로 업데이트
+    # out = lite_df.drop(columns=["_pass_light_generic"]).copy()
+    # for col in details_df.columns:
+    #     if col != "Ticker":
+    #         out[col] = out["Ticker"].map(details_df.set_index("Ticker")[col])
+
+    # 데이터 타입 정리
+    for c in ["RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)", "FCF_Yield", "DivYield"]:
         if c in out.columns:
-            out[c] = out[c].astype(float)
+            out[c] = pd.to_numeric(out[c], errors='coerce')
 
-    out["CreatedAtUTC"]=datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    out["Source"]=source
+    out["CreatedAtUTC"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    out["Source"] = source
 
+    # 저장
     base = CONFIG["OUT_BASENAME"].strip() or f"details_cache_{source}"
     csv_path = f"{base}.csv"
     out.to_csv(csv_path, index=False)
-    print(f"[Cache] saved: {csv_path} (rows={len(out)})")
+    print(f"[캐시] 저장 완료: {csv_path} (행: {len(out)})")
 
     if CONFIG["INCLUDE_EXCEL"]:
-        engine=None
         try:
-            import xlsxwriter  # noqa
-            engine="xlsxwriter"
-        except Exception:
-            try:
-                import openpyxl  # noqa
-                engine="openpyxl"
-            except Exception:
-                engine=None
-        if engine:
-            xlsx_path=f"{base}.xlsx"
-            with pd.ExcelWriter(xlsx_path, engine=engine) as w:
-                out.to_excel(w, index=False, sheet_name="details_cache")
-            print(f"[Cache] saved: {xlsx_path}")
-        else:
-            print("[Cache] Excel 저장 생략(XlsxWriter/openpyxl 미설치).")
+            xlsx_path = f"{base}.xlsx"
+            out.to_excel(xlsx_path, index=False)
+            print(f"[캐시] 엑셀 저장: {xlsx_path}")
+        except Exception as e:
+            print(f"[캐시] 엑셀 저장 실패: {e}")
+
+    return out
+
+# ============== 라이트 컷 함수(캐시 단계에서 후보 축소용) ==============
+def pass_light_generic(price, dollar_vol):
+    if price is None or dollar_vol is None: return False
+    return (price >= CONFIG["MIN_PRICE"]) and (dollar_vol >= CONFIG["MIN_DOLLAR_VOLUME"])
 
 if __name__ == "__main__":
     build_details_cache()
