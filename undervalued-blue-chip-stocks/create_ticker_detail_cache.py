@@ -9,10 +9,6 @@ build_details_cache.py
 권장 설치:
   pip install -U yfinance==0.2.43 pandas numpy XlsxWriter openpyxl requests matplotlib
 
-유니버스(US_ALL/SP500/커스텀)를 불러와 OHLCV(기본 120d)에서 라이트 지표(Price, DollarVol, RVOL, ATR_PCT 등)를 전종목 산출
-→ 라이트 컷 통과 종목(및 상위 DETAILED_TOP_K)에 한해 재무 지표(RevYoY, OpMarginTTM, EV/EBITDA, FCFY 등)까지 수집
-→ 단일 캐시 파일(details_cache_{source}.csv / .xlsx)에 저장
-
 개선사항:
 1. EV/EBITDA 계산 로직 강화
 2. FCF Yield 계산 방식 개선
@@ -982,13 +978,17 @@ def build_details_cache():
     if lite_df.empty:
         raise RuntimeError("라이트 지표 표가 비어 있음")
 
-    # 상세 호출 대상 선정
+    # 상세 호출 대상 선정 - 수정된 부분
     lite_df["_pass_light_generic"] = lite_df.apply(
         lambda r: pass_light_generic(r["Price"], r["DollarVol($M)"] * 1_000_000), axis=1
     )
-    cand = lite_df[lite_df["_pass_light_generic"]].sort_values("DollarVol($M)", ascending=False).head(
-        CONFIG["DETAILED_TOP_K"])
 
+    # 라이트 필터 통과한 종목 중에서만 상위 K개 선정
+    passed_tickers = lite_df[lite_df["_pass_light_generic"]]
+    print(f"라이트 필터 통과: {len(passed_tickers)}개")
+
+    cand = passed_tickers.sort_values("DollarVol($M)", ascending=False).head(CONFIG["DETAILED_TOP_K"])
+    print(f"상세 데이터 수집 대상: {len(cand)}개")
     print(f"[상세데이터] 후보: {len(cand)} / 라이트 총계: {len(lite_df)}")
 
     # 상세 재무 수집
@@ -1003,8 +1003,7 @@ def build_details_cache():
                 avg_vol=(row["DollarVol($M)"] * 1_000_000) / max(1e-9, row["Price"])
             )
 
-            # 라이트 필드 병합 (중복 컬럼 제거)
-            # Price, DollarVol($M) 등은 이미 rec에 있으므로 중복 추가하지 않음
+            # 라이트 필드 병합
             rec.update({
                 "SMA20": row.get("SMA20"),
                 "SMA50": row.get("SMA50"),
@@ -1027,19 +1026,18 @@ def build_details_cache():
 
     print(f"[상세데이터] 최종 수집: {success_count}/{len(cand)} 종목")
 
-    # 결과 병합 - 수정된 부분
+    # 결과 병합 - 라이트 필터 통과한 전체 종목과 상세 데이터 병합
     details_df = pd.DataFrame(detail_rows)
 
-    # 방법 1: lite_df에서 중복 컬럼 제거 후 merge
-    lite_columns_to_keep = ["Ticker"]  # Ticker만 유지
-    lite_for_merge = lite_df[lite_columns_to_keep].copy()
-
+    # 🔥 중요: 라이트 필터 통과한 전체 종목과 상세 데이터 LEFT JOIN
     out = pd.merge(
-        lite_for_merge,
+        passed_tickers.drop(columns=["_pass_light_generic"]),
         details_df,
         on="Ticker",
-        how="left"
+        how="left"  # 라이트 필터 통과한 모든 종목은 유지
     )
+
+    print(f"최종 CSV 행 수: {len(out)} (라이트 필터 통과: {len(passed_tickers)})")
 
     # 방법 2: 또는 lite_df의 모든 데이터를 유지하면서 details_df의 데이터로 업데이트
     # out = lite_df.drop(columns=["_pass_light_generic"]).copy()

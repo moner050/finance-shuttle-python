@@ -6,7 +6,7 @@ screener_from_details_cache.py
 하나만으로 4개 프로파일 결과를 Excel로 출력.
 
 권장 설치:
-  pip install -U pandas numpy XlsxWriter openpyxl
+  pip install -U pandas numpy XlsxWriter openpyxl stats
 
 개선사항:
 1. 버핏 스타일에 더 적합한 점수 체계
@@ -18,15 +18,198 @@ screener_from_details_cache.py
 import os, math, time, random
 import pandas as pd, numpy as np
 from datetime import datetime
+from scipy import stats
 
+class ValuationModels:
+    """기관 스타일 적정가 계산 클래스"""
+
+    @staticmethod
+    def dcf_valuation(row, growth_rate=0.08, discount_rate=0.10, terminal_rate=0.02):
+        """
+        단순화된 DCF 모델
+        """
+        try:
+            # 현재 EPS 계산
+            current_eps = row['Price'] / row['PE'] if row['PE'] and row['PE'] > 0 else 0
+
+            if current_eps <= 0:
+                return None
+
+            # 10년간 예측
+            years = 10
+            future_eps = [current_eps * ((1 + growth_rate) ** i) for i in range(1, years + 1)]
+
+            # 현금흐름 할인
+            discounted_eps = [eps / ((1 + discount_rate) ** i) for i, eps in enumerate(future_eps, 1)]
+
+            # 터미널 가치
+            terminal_eps = future_eps[-1] * (1 + terminal_rate)
+            terminal_value = terminal_eps / (discount_rate - terminal_rate)
+            discounted_terminal = terminal_value / ((1 + discount_rate) ** years)
+
+            return sum(discounted_eps) + discounted_terminal
+
+        except Exception:
+            return None
+
+    @staticmethod
+    def relative_valuation(df, target_row):
+        """
+        동종업체 비교를 통한 적정가
+        """
+        try:
+            sector = target_row['Sector']
+            price = target_row['Price']
+
+            # 동일 섹터 필터링
+            sector_peers = df[df['Sector'] == sector]
+
+            if len(sector_peers) < 5:
+                return None
+
+            valuations = []
+
+            # PER 비교
+            if pd.notna(target_row['PE']) and target_row['PE'] > 0:
+                sector_median_pe = sector_peers['PE'].median()
+                eps = price / target_row['PE']
+                pe_fair_value = sector_median_pe * eps
+                valuations.append(pe_fair_value)
+
+            # PBR 비교
+            if pd.notna(target_row['PB']) and target_row['PB'] > 0:
+                sector_median_pb = sector_peers['PB'].median()
+                bps = price / target_row['PB']
+                pb_fair_value = sector_median_pb * bps
+                valuations.append(pb_fair_value)
+
+            # EV/EBITDA 비교
+            if pd.notna(target_row['EV_EBITDA']) and target_row['EV_EBITDA'] > 0:
+                sector_median_ev_ebitda = sector_peers['EV_EBITDA'].median()
+                ev_fair_value = price * (sector_median_ev_ebitda / target_row['EV_EBITDA'])
+                valuations.append(ev_fair_value)
+
+            # P/FFO 비교 (리츠)
+            if pd.notna(target_row.get('P_FFO')) and target_row.get('P_FFO', 0) > 0:
+                sector_median_p_ffo = sector_peers['P_FFO'].median()
+                ffo_fair_value = price * (sector_median_p_ffo / target_row['P_FFO'])
+                valuations.append(ffo_fair_value)
+
+            return sum(valuations) / len(valuations) if valuations else None
+
+        except Exception:
+            return None
+
+    @staticmethod
+    def dividend_discount_model(row, required_return=0.08):
+        """
+        배당할인모델
+        """
+        try:
+            div_yield = row.get('DivYield', 0)
+            if not div_yield or div_yield <= 0:
+                return None
+
+            current_dividend = row['Price'] * div_yield
+            growth_rate = min(0.05, row.get('RevYoY', 0.03) * 0.5)  # 보수적 성장률
+
+            # 고든 성장모델
+            if growth_rate >= required_return:
+                growth_rate = required_return - 0.01
+
+            fair_value = current_dividend * (1 + growth_rate) / (required_return - growth_rate)
+            return fair_value
+
+        except Exception:
+            return None
+
+    @staticmethod
+    def graham_number(row):
+        """
+        벤저민 그레이엄의 가치공식
+        """
+        try:
+            eps = row['Price'] / row['PE'] if row['PE'] and row['PE'] > 0 else 0
+            bps = row['Price'] / row['PB'] if row['PB'] and row['PB'] > 0 else 0
+
+            if eps <= 0 or bps <= 0:
+                return None
+
+            graham_val = math.sqrt(22.5 * eps * bps)
+            return graham_val
+
+        except Exception:
+            return None
+
+
+def calculate_comprehensive_fair_value(df):
+    """
+    종합 적정가 계산
+    """
+    fair_value_data = []
+
+    for idx, row in df.iterrows():
+        valuations = []
+
+        # 다양한 모델로 적정가 계산
+        dcf_val = ValuationModels.dcf_valuation(row)
+        if dcf_val: valuations.append(dcf_val)
+
+        rel_val = ValuationModels.relative_valuation(df, row)
+        if rel_val: valuations.append(rel_val)
+
+        ddm_val = ValuationModels.dividend_discount_model(row)
+        if ddm_val: valuations.append(ddm_val)
+
+        graham_val = ValuationModels.graham_number(row)
+        if graham_val: valuations.append(graham_val)
+
+        # 적정가 평균 (이상치 제거)
+        if valuations:
+            # IQR 방식으로 이상치 제거
+            q1 = np.percentile(valuations, 25)
+            q3 = np.percentile(valuations, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+
+            filtered_vals = [v for v in valuations if lower_bound <= v <= upper_bound]
+            fair_value = np.mean(filtered_vals) if filtered_vals else np.mean(valuations)
+        else:
+            fair_value = None
+
+        # 현재가 대비 할인/프리미엄률
+        current_price = row['Price']
+        if fair_value and current_price > 0:
+            discount_pct = (fair_value - current_price) / current_price * 100
+        else:
+            discount_pct = None
+
+        fair_value_data.append({
+            'FairValue_DCF': dcf_val,
+            'FairValue_Relative': rel_val,
+            'FairValue_DDM': ddm_val,
+            'FairValue_Graham': graham_val,
+            'FairValue_Composite': fair_value,
+            'Discount_Pct': discount_pct
+        })
+
+    return pd.DataFrame(fair_value_data, index=df.index)
+
+FIN_SECTORS = {"banks", "financial", "insurance", "capital markets"}
+REIT_SECTORS = {"reit", "real estate", "property"}
+CYCLICAL_SECTORS = {"energy", "materials", "industrials", "consumer cyclical"}
+DEFENSIVE_SECTORS = {"utilities", "consumer defensive", "healthcare"}
+
+# 통합 CONFIG 설정
 CONFIG = {
-    "DETAILS_CACHE_FILE": "details_cache_us_all.csv",
+    "DETAILS_CACHE_FILE": "details_cache_us_all_refiltered.csv",
     "RUN_PROFILES": ["buffett_lite", "buffett_strict", "swing", "daytrade"],
 
-    # 버핏 공통 컷
-    "MIN_MKTCAP": 800_000_000,
+    # 버핏 공통 필터
+    "MIN_MKTCAP": 50_000_000,  # 5천만 달러
     "MIN_PRICE": 1.0,
-    "MIN_DOLLAR_VOLUME": 900_000,
+    "MIN_DOLLAR_VOLUME": 1_000_000,
     "MAX_EV_EBITDA_HARD": 25.0,
     "HARD_PEG_MAX": 2.0,
     "HARD_PE_MAX": 30.0,
@@ -36,19 +219,12 @@ CONFIG = {
     "MIN_ROE_HF": 0.08,
     "MIN_FCFY_HF": 0.02,
 
-    # 섹터별 OP Margin 면제
-    "OP_MARGIN_EXEMPT_SECTORS": {
-        "financial services", "banks", "insurance", "capital markets",
-        "mortgage finance", "utilities", "real estate", "reit"
-    },
+    # 추가된 설정들
+    "OP_MARGIN_EXEMPT_SECTORS": FIN_SECTORS,  # 영업이익률 필터에서 제외할 섹터
+    "MIN_DISCOUNT_PCT": 0.0,  # 최소 할인율
+    "MAX_DISCOUNT_PCT": 50.0,  # 최대 할인율
 
-    # 개선된 점수 가중치 (버핏 스타일)
-    "W_GROWTH": 0.15,      # 증가: 성장성 더 강조
-    "W_QUALITY": 0.35,     # 증가: 수익성과 재무건전성 강조
-    "W_VALUE": 0.40,       # 감소: 가치보다 질 더 강조
-    "W_CATALYST": 0.10,    # 유지
-
-    # 트레이딩 컷
+    # 트레이딩 필터
     "SWING_FILTERS": {
         "MIN_PRICE": 5.0,
         "MIN_DOLLAR_VOLUME": 5_000_000,
@@ -66,14 +242,160 @@ CONFIG = {
         "MIN_RET5": 0.03
     },
 
-    # 출력
+    # 점수 가중치
+    "W_GROWTH": 0.15,
+    "W_QUALITY": 0.35,
+    "W_VALUE": 0.40,
+    "W_CATALYST": 0.10,
+
     "OUT_PREFIX": "IMPROVED_SCREENER",
 }
 
-FIN_SECTORS = {"banks", "financial", "insurance", "capital markets"}
-REIT_SECTORS = {"reit", "real estate", "property"}
-CYCLICAL_SECTORS = {"energy", "materials", "industrials", "consumer cyclical"}
-DEFENSIVE_SECTORS = {"utilities", "consumer defensive", "healthcare"}
+def enhanced_valuation_screener():
+    """
+    적정가 계산이 통합된 개선된 스크리너
+    """
+    # 데이터 로드
+    df = load_cache(CONFIG["DETAILS_CACHE_FILE"])
+
+    # 적정가 계산
+    print("Calculating fair values...")
+    fair_values_df = calculate_comprehensive_fair_value(df)
+    df = pd.concat([df, fair_values_df], axis=1)
+
+    # 버핏형 필터링 + 적정가 필터
+    def enhanced_buffett_filter(row, cfg):
+        # 기존 버핏 필터
+        if not enhanced_pass_buffett_base(row, cfg):
+            return False
+
+        # 적정가 필터 추가
+        discount_pct = row.get('Discount_Pct')
+        if discount_pct is None:
+            return False
+
+        # 적정가 대비 적절한 할인율인지 확인
+        if not (cfg["MIN_DISCOUNT_PCT"] <= discount_pct <= cfg["MAX_DISCOUNT_PCT"]):
+            return False
+
+        return True
+
+    results = {}
+
+    # 버핏-Lite (적정가 필터 포함)
+    mask_lite = df.apply(lambda r: enhanced_buffett_filter(r, CONFIG), axis=1)
+    raw_lite = df[mask_lite].copy()
+
+    if not raw_lite.empty:
+        scored_lite = build_scores_buffett(raw_lite, CONFIG)
+        # 적정가 정보를 점수에 반영
+        scored_lite['ValuationAdjustedScore'] = scored_lite['TotalScore'] * (
+                1 + scored_lite['Discount_Pct'].fillna(0) / 100
+        )
+        results["buffett_lite"] = scored_lite.sort_values("ValuationAdjustedScore", ascending=False)
+
+    # 버핏-Strict (더 엄격한 적정가 필터)
+    strict_cfg = CONFIG.copy()
+    strict_cfg.update({
+        "MIN_DISCOUNT_PCT": 15.0,
+        "MAX_DISCOUNT_PCT": 40.0,
+        "MIN_MKTCAP": 2_000_000_000,
+        "MIN_OP_MARGIN_HF": 0.12,
+    })
+
+    mask_strict = df.apply(lambda r: enhanced_buffett_filter(r, strict_cfg), axis=1)
+    raw_strict = df[mask_strict].copy()
+
+    if not raw_strict.empty:
+        scored_strict = build_scores_buffett(raw_strict, strict_cfg)
+        scored_strict['ValuationAdjustedScore'] = scored_strict['TotalScore'] * (
+                1 + scored_strict['Discount_Pct'].fillna(0) / 100
+        )
+        results["buffett_strict"] = scored_strict.sort_values("ValuationAdjustedScore", ascending=False)
+
+    # 트레이딩 프로파일 추가 (swing, daytrade)
+    for prof in ("swing", "daytrade"):
+        mask_tr = df.apply(lambda r: pass_trading(r, prof, CONFIG), axis=1)
+        base = df[mask_tr].copy()
+        if not base.empty:
+            scored = build_scores_trading(base, profile=prof, cfg=CONFIG)
+            # 트레이딩 결과에 필요한 컬럼 선택
+            trading_cols = [
+                "Ticker", "Name", "Sector", "Price", "DollarVol($M)", "RVOL",
+                "ATR_PCT", "SMA20", "SMA50", "RET5", "RET20",
+                "MomentumScore", "TrendScore", "LiquidityScore", "VolatilityScore", "TotalScore"
+            ]
+            trading_cols = [c for c in trading_cols if c in scored.columns]
+            results[prof] = scored[trading_cols].sort_values("TotalScore", ascending=False)
+
+    # 결과 저장
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"COMPREHENSIVE_SCREENER_{ts}.xlsx"
+
+    with pd.ExcelWriter(out_name, engine='openpyxl') as writer:
+        # 버핏 프로파일 시트
+        for profile in ["buffett_lite", "buffett_strict"]:
+            if profile in results and not results[profile].empty:
+                # 주요 컬럼 선택
+                cols = [
+                    'Ticker', 'Name', 'Sector', 'Price', 'FairValue_Composite', 'Discount_Pct',
+                    'MktCap($B)', 'PE', 'PEG', 'EV_EBITDA', 'FCF_Yield', 'ROE(info)',
+                    'GrowthScore', 'QualityScore', 'ValueScore', 'TotalScore', 'ValuationAdjustedScore'
+                ]
+                cols = [c for c in cols if c in results[profile].columns]
+                results[profile][cols].to_excel(writer, sheet_name=profile[:31], index=False)
+
+        # 트레이딩 프로파일 시트
+        for profile in ["swing", "daytrade"]:
+            if profile in results and not results[profile].empty:
+                results[profile].to_excel(writer, sheet_name=profile[:31], index=False)
+
+        # 통합 요약 시트
+        summary_data = []
+        for profile in ["buffett_lite", "buffett_strict", "swing", "daytrade"]:
+            if profile in results and not results[profile].empty:
+                if profile.startswith('buffett'):
+                    avg_discount = results[profile]['Discount_Pct'].mean()
+                    median_pe = results[profile]['PE'].median()
+                    summary_data.append({
+                        'Profile': profile,
+                        'Stocks_Count': len(results[profile]),
+                        'Avg_Discount_Pct': avg_discount,
+                        'Median_PE': median_pe,
+                        'Top_Tickers': ', '.join(results[profile].head(5)['Ticker'].tolist())
+                    })
+                else:
+                    # 트레이딩 프로파일 요약
+                    avg_rvol = results[profile]['RVOL'].mean()
+                    avg_atr = results[profile]['ATR_PCT'].mean()
+                    summary_data.append({
+                        'Profile': profile,
+                        'Stocks_Count': len(results[profile]),
+                        'Avg_RVOL': avg_rvol,
+                        'Avg_ATR_PCT': avg_atr,
+                        'Top_Tickers': ', '.join(results[profile].head(5)['Ticker'].tolist())
+                    })
+
+        pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
+
+        # 상위 종목 통합 시트
+        top_stocks = []
+        for profile in ["buffett_strict", "buffett_lite", "swing", "daytrade"]:
+            if profile in results and not results[profile].empty:
+                top_df = results[profile].head(10).copy()
+                top_df['Profile'] = profile
+                top_stocks.append(top_df)
+
+        if top_stocks:
+            pd.concat(top_stocks, ignore_index=True).to_excel(writer, sheet_name='Top_Stocks_All', index=False)
+
+    print(f"[COMPREHENSIVE SCREENER] Results saved to: {out_name}")
+    print(f" - 포함된 프로파일: {list(results.keys())}")
+    print(f" - 총 종목 수:")
+    for profile, result_df in results.items():
+        print(f"   * {profile}: {len(result_df)}개")
+
+    return results
 
 def _winsor_series(s: pd.Series, p=0.02):
     s = s.astype(float)
@@ -92,9 +414,51 @@ def _clip01(x):
     except Exception:
         return np.nan
 
+
+def check_data_quality_before_screening(df):
+    """스크리너 실행 전 데이터 품질 확인"""
+    print("=== 데이터 품질 확인 ===")
+
+    essential_columns = {
+        '버핏 분석': ['Price', 'MktCap($B)', 'RevYoY', 'OpMarginTTM', 'ROE(info)', 'PE', 'EV_EBITDA'],
+        '트레이딩 분석': ['SMA20', 'SMA50', 'ATR_PCT', 'RVOL', 'RET5', 'RET20']
+    }
+
+    for category, columns in essential_columns.items():
+        print(f"\n{category}:")
+        for col in columns:
+            if col in df.columns:
+                non_null = df[col].notna().sum()
+                pct = (non_null / len(df)) * 100
+                print(f"  {col}: {non_null}/{len(df)} ({pct:.1f}%)")
+            else:
+                print(f"  {col}: ❌ 컬럼 없음")
+
+    # NULL 비율이 높은 컬럼 식별
+    low_quality_cols = []
+    for col in df.columns:
+        if df[col].notna().sum() / len(df) < 0.3:  # 30% 미만 데이터
+            low_quality_cols.append(col)
+
+    if low_quality_cols:
+        print(f"\n⚠️ 주의: 데이터가 부족한 컬럼들: {low_quality_cols}")
+
 def build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
     """개선된 버핏 스타일 점수 계산"""
     temp = df.copy()
+
+    # 누락될 수 있는 컬럼들에 대한 안전장치
+    if "ROE_5Y_Avg" not in temp.columns:
+        temp["ROE_5Y_Avg"] = temp["ROE(info)"]  # 기본값으로 ROE(info) 사용
+
+    if "Debt_to_Equity" not in temp.columns:
+        temp["Debt_to_Equity"] = None  # 또는 적절한 기본값
+
+    if "BuybackYield" not in temp.columns:
+        temp["BuybackYield"] = None
+
+    if "P_FFO" not in temp.columns:
+        temp["P_FFO"] = None
 
     # 데이터 전처리
     temp["_OpMarginUse"] = temp[["OpMarginTTM", "OperatingMargins(info)"]].max(axis=1, numeric_only=True)
@@ -338,7 +702,7 @@ def run_enhanced_screener():
 
         # 상위 종목 통합 시트
         top_stocks = []
-        for prof in ["buffett_strict", "buffett_lite"]:
+        for prof in ["buffett_strict", "buffett_lite","swing", "daytrade"]:
             if prof in results and not results[prof].empty:
                 top_df = results[prof].head(20).copy()
                 top_df["Profile"] = prof
@@ -546,4 +910,7 @@ def run_from_cache():
     print(f"[DONE] saved {out_name}")
 
 if __name__ == "__main__":
-    run_enhanced_screener()
+    df = load_cache(CONFIG["DETAILS_CACHE_FILE"])
+    check_data_quality_before_screening(df)
+    enhanced_valuation_screener()
+    # run_enhanced_screener()
