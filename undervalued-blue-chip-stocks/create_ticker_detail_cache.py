@@ -1040,7 +1040,7 @@ def fetch_details_for_ticker(tkr, price, avg_vol):
 
 
 def build_details_cache():
-    """캐시 빌드 함수"""
+    """캐시 빌드 함수 - _x, _y 접미사 문제 해결"""
     source = CONFIG["UNIVERSE_SOURCE"]
     tickers = load_universe()
 
@@ -1131,18 +1131,28 @@ def build_details_cache():
 
     print(f"[상세데이터] 최종 수집: {success_count}/{len(cand)} 종목")
 
-    # 결과 병합
+    # 🔥 수정된 부분: _x, _y 접미사 문제 해결
     details_df = pd.DataFrame(detail_rows)
 
-    out = pd.merge(
-        passed_tickers.drop(columns=["_pass_light_generic"]),
-        details_df,
-        on="Ticker",
-        how="left"
-    )
+    # 방법 1: merge 대신 직접 매핑 (권장)
+    print("데이터 병합 중...")
 
+    # 라이트 데이터프레임 준비
+    base_df = passed_tickers.drop(columns=["_pass_light_generic"]).copy()
+
+    # 상세 데이터를 딕셔너리로 변환 (빠른 조회용)
+    details_dict = details_df.set_index('Ticker').to_dict('index')
+
+    # 각 컬럼에 대해 상세 데이터 매핑
+    detail_columns = [col for col in details_df.columns if col not in ['Ticker']]
+
+    for col in detail_columns:
+        base_df[col] = base_df['Ticker'].map(
+            {ticker: data.get(col) for ticker, data in details_dict.items()}
+        )
+
+    out = base_df
     print(f"최종 CSV 행 수: {len(out)} (라이트 필터 통과: {len(passed_tickers)})")
-
     # 데이터 타입 정리
     for c in ["RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)", "FCF_Yield", "DivYield"]:
         if c in out.columns:
@@ -1160,14 +1170,13 @@ def build_details_cache():
 
     if CONFIG["INCLUDE_EXCEL"]:
         try:
-            xlsx_path = f"{base}.xlsx"
+            xlsx_path = f"{base}_{ts}.xlsx"
             out.to_excel(xlsx_path, index=False)
             print(f"[캐시] 엑셀 저장: {xlsx_path}")
         except Exception as e:
             print(f"[캐시] 엑셀 저장 실패: {e}")
 
     return out
-
 
 # ============== 라이트 컷 함수 ==============
 def pass_light_generic(price, dollar_vol):
