@@ -205,7 +205,7 @@ DEFENSIVE_SECTORS = {"utilities", "consumer defensive", "healthcare"}
 
 # 통합 CONFIG 설정 (현대적 버핏 철학 반영 + 엄격한 기준)
 CONFIG = {
-    "DETAILS_CACHE_FILE": "details_cache_us_all_20251025_????.csv",
+    "DETAILS_CACHE_FILE": "details_cache_us_all_20251025_194009.csv",
     "RUN_PROFILES": ["buffett_lite", "buffett_strict", "modern_buffett", "swing", "daytrade"],
 
     # 데이터가 있는 지표들만 필수 조건으로 사용
