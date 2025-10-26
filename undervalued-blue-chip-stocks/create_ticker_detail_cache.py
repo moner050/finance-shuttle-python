@@ -359,22 +359,15 @@ def _compute_ta_metrics(df):
 def safe_yf_download(tickers, **kwargs):
     """안전한 yfinance 다운로드"""
     max_retries = kwargs.pop('max_retries', 3)
-    timeout = kwargs.pop('timeout', 30)
-
     for attempt in range(max_retries):
         try:
             data = yf.download(tickers, **kwargs)
-            if data is not None and not data.empty:
+            if not data.empty:
                 return data
         except Exception as e:
             print(f"yfinance 다운로드 시도 {attempt + 1}/{max_retries} 실패: {e}")
-            if attempt < max_retries - 1:
-                sleep_time = (2 ** attempt) + random.random()
-                print(f"{sleep_time:.1f}초 후 재시도...")
-                time.sleep(sleep_time)
-
+            time.sleep(2 ** attempt + random.uniform(0, 1))  # Exponential backoff
     return None
-
 
 def preload_ohlcv_light(tickers, period="120d", chunk=50, **kwargs):
     """OHLCV 데이터 프리로드"""
