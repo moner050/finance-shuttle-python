@@ -590,6 +590,88 @@ def apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row):
         worksheet.conditional_formatting.add(range_str, orange_rule)
         worksheet.conditional_formatting.add(range_str, red_rule)
 
+    score_columns = ['GrowthScore', 'QualityScore', 'ValueScore', 'CatalystScore', 'TotalScore']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.7점 이상 (강함)
+            green_rule = CellIsRule(operator='greaterThan', formula=['0.7'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.6-0.7점 (보통)
+            orange_rule = CellIsRule(operator='between', formula=['0.6', '0.7'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.6점 미만 (약함)
+            red_rule = CellIsRule(operator='lessThan', formula=['0.6'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+    # 가치 조정 종합점수
+    score_columns = ['ValuationAdjustedScore']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.7 (매우 매력적)
+            green_rule = CellIsRule(operator='greaterThan', formula=['0.7'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.6-0.7점 (보통)
+            orange_rule = CellIsRule(operator='between', formula=['0.6', '0.7'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.6점 미만 (약함)
+            red_rule = CellIsRule(operator='lessThan', formula=['0.6'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+    # 현대적 버핏 점수
+    score_columns = ['ModernBuffettScore']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.8점 이상 (강함)
+            green_rule = CellIsRule(operator='greaterThan', formula=['0.8'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.6-0.8점 (보통)
+            orange_rule = CellIsRule(operator='between', formula=['0.6', '0.8'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.6점 미만 (약함)
+            red_rule = CellIsRule(operator='lessThan', formula=['0.6'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+    # 현대적 버핏 종합점수
+    score_columns = ['TotalScore_Modern']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 75점 이상 (강함)
+            green_rule = CellIsRule(operator='greaterThan', formula=['75'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 65-75점 (보통)
+            orange_rule = CellIsRule(operator='between', formula=['65', '75'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 65점 미만 (약함)
+            red_rule = CellIsRule(operator='lessThan', formula=['65'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
 
 def apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row):
     """
@@ -684,7 +766,51 @@ def apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row):
         worksheet.conditional_formatting.add(range_str, red_rule)
 
     # 트레이딩 점수들
-    score_columns = ['MomentumScore', 'TrendScore', 'LiquidityScore', 'VolatilityScore', 'TotalScore']
+    score_columns = ['MomentumScore', 'TrendScore', 'LiquidityScore']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.7점 이상 (강함)
+            green_rule = CellIsRule(operator='greaterThan', formula=['0.7'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.5-0.7점 (보통)
+            orange_rule = CellIsRule(operator='between', formula=['0.5', '0.7'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.5점 미만 (약함)
+            red_rule = CellIsRule(operator='lessThan', formula=['0.5'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+    score_columns = ['VolatilityScore']
+    for score_col in score_columns:
+        if score_col in col_mapping:
+            col_letter = get_column_letter(col_mapping[score_col])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.6-0.8 (적정관심)
+            green_rule = CellIsRule(operator='between', formula=['0.6', '0.8'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.4-0.6 (주의)
+            orange_rule = CellIsRule(operator='between', formula=['0.4', '0.6'],
+                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.4 미만 또는 0.8 초과 (위험)
+            red_rule1 = CellIsRule(operator='lessThan', formula=['0.4'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+            red_rule2 = CellIsRule(operator='greaterThan', formula=['0.8'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule1)
+            worksheet.conditional_formatting.add(range_str, red_rule2)
+
+    # 토탈 점수
+    score_columns = ['TotalScore']
     for score_col in score_columns:
         if score_col in col_mapping:
             col_letter = get_column_letter(col_mapping[score_col])
@@ -1208,7 +1334,7 @@ DEFENSIVE_SECTORS = {"utilities", "consumer defensive", "healthcare", "consumer 
 # 통합 CONFIG 설정 (현대적 버핏 철학 반영 + 엄격한 기준)
 # 개선된 CONFIG 설정 (현실적인 미국 주식 기준)
 CONFIG = {
-    "DETAILS_CACHE_FILE": "details_cache_us_all_20251025_194009.csv",  # 실제 파일명으로 변경
+    "DETAILS_CACHE_FILE": "details_cache_us_all.csv",  # 실제 파일명으로 변경
     "RUN_PROFILES": ["buffett_lite", "buffett_strict", "modern_buffett", "swing", "daytrade"],
 
     # 현실적인 기본 조건 (미국 시장 기준)
@@ -1577,7 +1703,7 @@ def create_detailed_explanation_sheets(writer):
             '열 이름': 'Sector',
             '의미': '업종/섹터',
             '설명': '기술, 헬스케어, 금융 등 산업 분류',
-            '적정 범위/기준': '경기방어성 섹터(소비재, 헬스케어) 선호'
+            '적정 범위/기준': '-'
         },
         {
             '열 이름': 'Industry',
@@ -1877,7 +2003,7 @@ def create_detailed_explanation_sheets(writer):
     print(f"   ✅ 버핏 지표 설명: {len(buffett_explanations)}개 지표 추가 (FairValue 구체화)")
 
     # 2. 트레이딩 프로파일 설명 시트
-    trading_explanations = [
+    swing_daytrading_explanations = [
         {
             '열 이름': 'Ticker',
             '의미': '종목코드',
@@ -1948,25 +2074,25 @@ def create_detailed_explanation_sheets(writer):
             '열 이름': 'MomentumScore',
             '의미': '모멘텀 점수',
             '설명': '단기 주가 추세 강도 (최근 상승력)',
-            '적정 범위/기준': '✅ 70점 이상: 강한모멘텀\n⚠️ 50-70점: 보통모멘텀\n❌ 50점 미만: 약한모멘텀'
+            '적정 범위/기준': '✅ 0.7점 이상: 강한모멘텀\n⚠️ 0.5-0.7점: 보통모멘텀\n❌ 0.5점 미만: 약한모멘텀'
         },
         {
             '열 이름': 'TrendScore',
             '의미': '트렌드 점수',
             '설명': '장기 추세 방향성 (상승/하락/횡보)',
-            '적정 범위/기준': '✅ 70점 이상: 강한상승추세\n⚠️ 50-70점: 약한상승/횡보\n❌ 50점 미만: 하락추세'
+            '적정 범위/기준': '✅ 0.7점 이상: 강한상승추세\n⚠️ 0.5-0.7점: 약한상승/횡보\n❌ 0.5점 미만: 하락추세'
         },
         {
             '열 이름': 'LiquidityScore',
             '의미': '유동성 점수',
             '설명': '매매 용이성 (거래량, 거래대금 종합)',
-            '적정 범위/기준': '✅ 70점 이상: 높은유동성\n⚠️ 50-70점: 보통유동성\n❌ 50점 미만: 낮은유동성'
+            '적정 범위/기준': '✅ 0.7점 이상: 높은유동성\n⚠️ 0.5-0.7점: 보통유동성\n❌ 0.5점 미만: 낮은유동성'
         },
         {
             '열 이름': 'VolatilityScore',
             '의미': '변동성 점수',
             '설명': '적정 변동성 (너무 낮거나 높지 않은 적정 수준)',
-            '적정 범위/기준': '✅ 60-80점: 이상적변동성\n⚠️ 40-60점: 높은변동성\n❌ 40점 미만: 매우높은변동성'
+            '적정 범위/기준': '✅ 0.6-0.8점: 이상적변동성\n⚠️ 0.4-0.6점: 높은변동성\n❌ 0.4점 미만: 매우높은변동성'
         },
         {
             '열 이름': 'TotalScore',
@@ -1976,9 +2102,9 @@ def create_detailed_explanation_sheets(writer):
         }
     ]
 
-    trading_df = pd.DataFrame(trading_explanations)
-    trading_df.to_excel(writer, sheet_name='트레이딩_지표_설명', index=False)
-    apply_excel_styling(writer, '트레이딩_지표_설명', trading_df)
+    trading_df = pd.DataFrame(swing_daytrading_explanations)
+    trading_df.to_excel(writer, sheet_name='스윙&daytrade_지표_설명', index=False)
+    apply_excel_styling(writer, '스윙&daytrade_지표_설명', trading_df)
 
     # 3. 프로파일 비교 설명 시트
     profile_comparison = [
@@ -1999,7 +2125,7 @@ def create_detailed_explanation_sheets(writer):
             '목표 수익률': '연 15-20%',
             '주요 초점': '고품질 기업 + 확실한 안전마진',
             '위험 수준': '낮음-중간',
-            '추천 투자자': '경험丰富的 가치투자자',
+            '추천 투자자': '경험이 많은 가치투자자',
             '핵심 지표': 'Discount_Pct, ROE, OpMargin, ModernBuffettScore'
         },
         {
@@ -2048,7 +2174,7 @@ def create_detailed_explanation_sheets(writer):
         },
         {
             '색상': '🟡 주황색',
-            '의미': '주의 needed',
+            '의미': '주의',
             '설명': '보통 수준이거나 주의가 필요한 조건',
             '예시': '할인율 0-8%, ROE 10-15%, PER 15-25배 등'
         },
@@ -2112,35 +2238,6 @@ def create_styled_excel_output(results, filename):
         # 3. 상세한 설명 시트들 생성
         print("📚 상세한 설명 시트 생성 중...")
         create_detailed_explanation_sheets(writer)
-
-        # 4. 데이터 품질 리포트 시트
-        quality_data = [
-            {
-                '지표': 'Debt_to_Equity',
-                '의미': '부채비율',
-                '데이터 가용성': '낮음',
-                '원인': 'yfinance에서 부채/자본비율 데이터 제공 불완전',
-                '대체 지표': '이자보상배수 또는 부채/자산비율'
-            },
-            {
-                '지표': 'BuybackYield',
-                '의미': '자사주매수 수익률',
-                '데이터 가용성': '매우 낮음',
-                '원인': '대부분의 데이터 제공업체에서 이 지표를 제공하지 않음',
-                '대체 지표': '배당수익률(DivYield)로 대체'
-            },
-            {
-                '지표': 'P_FFO',
-                '의미': '주당운영현금흐름 배수',
-                '데이터 가용성': '리츠 전용',
-                '원인': '일반 주식에는 적용되지 않는 리츠(REITs) 전용 지표',
-                '대체 지표': 'PER로 대체'
-            }
-        ]
-
-        quality_df = pd.DataFrame(quality_data)
-        quality_df.to_excel(writer, sheet_name='데이터_품질_리포트', index=False)
-        apply_excel_styling(writer, '데이터_품질_리포트', quality_df)
 
 def enhanced_valuation_screener_with_formatting():
     """
@@ -2256,7 +2353,7 @@ def enhanced_valuation_screener_with_formatting():
 
     # 모든 설명이 포함된 엑셀 파일 생성
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_name = f"COMPREHENSIVE_SCREENER_{ts}.xlsx"
+    out_name = f"버핏장타&단타_종목_정리_{ts}.xlsx"
 
     print("\n🎨 엑셀 스타일링 및 상세 설명 추가 중...")
     create_styled_excel_output(results, out_name)
@@ -2266,7 +2363,6 @@ def enhanced_valuation_screener_with_formatting():
     print("   - 버핏_지표_설명: 41개 버핏 프로파일 지표 상세 설명")
     print("   - 트레이딩_지표_설명: 16개 트레이딩 지표 상세 설명")
     print("   - 프로파일_비교: 5개 프로파일 특징 비교")
-    print("   - 데이터_품질_리포트: 데이터 가용성 현황")
     print("   - ROE_비교_설명: ROE(info) vs ROE_5Y_Avg 비교 설명")
 
     return results
