@@ -1428,7 +1428,7 @@ def build_enhanced_details_cache():
     out["Source"] = source
 
     # 저장
-    base = CONFIG["OUT_BASENAME"].strip() or f"enhanced_details_cache_{source}"
+    base = CONFIG["OUT_BASENAME"].strip() or f"details_cache_us_all_{source}"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = f"{base}_{ts}.csv"
     out.to_csv(csv_path, index=False)

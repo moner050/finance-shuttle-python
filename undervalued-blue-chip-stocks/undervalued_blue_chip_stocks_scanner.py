@@ -151,102 +151,26 @@ def apply_number_formatting(worksheet, df, start_row=2):
     except Exception as e:
         print(f"   ⚠️ 숫자 포맷팅 적용 중 오류: {e}")
 
+
 def apply_enhanced_conditional_formatting(worksheet, df, sheet_name, start_row=2):
-    """새로운 기술적 지표들에 대한 조건부 서식 추가"""
+    """
+    향상된 조건부 서식 적용 (색상으로 가독성 향상)
+    """
     try:
+        # 컬럼 인덱스 찾기
         col_mapping = {col: idx + 1 for idx, col in enumerate(df.columns)}
 
-        # RSI_14 조건부 서식
-        if 'RSI_14' in col_mapping:
-            col_letter = get_column_letter(col_mapping['RSI_14'])
-            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+        # 프로파일별 조건부 서식 적용
+        if any(profile in sheet_name.lower() for profile in ['buffett', 'modern']):
+            apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row)
+        elif any(profile in sheet_name.lower() for profile in ['swing', 'daytrade']):
+            apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row)
 
-            # 초록색: 30-70 (이상적)
-            green_rule = CellIsRule(operator='between', formula=['30', '70'],
-                                    font=Font(color=ExcelStyles.GREEN, bold=True))
-            # 주황색: 20-30 또는 70-80 (주의)
-            orange_rule1 = CellIsRule(operator='between', formula=['20', '30'],
-                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
-            orange_rule2 = CellIsRule(operator='between', formula=['70', '80'],
-                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
-            # 빨간색: 20 미만 또는 80 초과 (위험)
-            red_rule1 = CellIsRule(operator='lessThan', formula=['20'],
-                                   font=Font(color=ExcelStyles.RED, bold=True))
-            red_rule2 = CellIsRule(operator='greaterThan', formula=['80'],
-                                   font=Font(color=ExcelStyles.RED, bold=True))
-
-            worksheet.conditional_formatting.add(range_str, green_rule)
-            worksheet.conditional_formatting.add(range_str, orange_rule1)
-            worksheet.conditional_formatting.add(range_str, orange_rule2)
-            worksheet.conditional_formatting.add(range_str, red_rule1)
-            worksheet.conditional_formatting.add(range_str, red_rule2)
-
-        # MACD_Histogram 조건부 서식
-        if 'MACD_Histogram' in col_mapping:
-            col_letter = get_column_letter(col_mapping['MACD_Histogram'])
-            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
-
-            # 초록색: 양수 (상승 모멘텀)
-            green_rule = CellIsRule(operator='greaterThan', formula=['0'],
-                                    font=Font(color=ExcelStyles.GREEN, bold=True))
-            # 빨간색: 음수 (하락 모멘텀)
-            red_rule = CellIsRule(operator='lessThan', formula=['0'],
-                                  font=Font(color=ExcelStyles.RED, bold=True))
-
-            worksheet.conditional_formatting.add(range_str, green_rule)
-            worksheet.conditional_formatting.add(range_str, red_rule)
-
-        # BB_Position 조건부 서식
-        if 'BB_Position' in col_mapping:
-            col_letter = get_column_letter(col_mapping['BB_Position'])
-            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
-
-            # 초록색: 0.3-0.7 (이상적)
-            green_rule = CellIsRule(operator='between', formula=['0.3', '0.7'],
-                                    font=Font(color=ExcelStyles.GREEN, bold=True))
-            # 주황색: 0.2-0.3 또는 0.7-0.8 (주의)
-            orange_rule1 = CellIsRule(operator='between', formula=['0.2', '0.3'],
-                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
-            orange_rule2 = CellIsRule(operator='between', formula=['0.7', '0.8'],
-                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
-            # 빨간색: 0.2 미만 또는 0.8 초과 (위험)
-            red_rule1 = CellIsRule(operator='lessThan', formula=['0.2'],
-                                   font=Font(color=ExcelStyles.RED, bold=True))
-            red_rule2 = CellIsRule(operator='greaterThan', formula=['0.8'],
-                                   font=Font(color=ExcelStyles.RED, bold=True))
-
-            worksheet.conditional_formatting.add(range_str, green_rule)
-            worksheet.conditional_formatting.add(range_str, orange_rule1)
-            worksheet.conditional_formatting.add(range_str, orange_rule2)
-            worksheet.conditional_formatting.add(range_str, red_rule1)
-            worksheet.conditional_formatting.add(range_str, red_rule2)
-
-        # High_52W_Ratio 조건부 서식
-        if 'High_52W_Ratio' in col_mapping:
-            col_letter = get_column_letter(col_mapping['High_52W_Ratio'])
-            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
-
-            # 초록색: 0.7-0.95 (이상적)
-            green_rule = CellIsRule(operator='between', formula=['0.7', '0.95'],
-                                    font=Font(color=ExcelStyles.GREEN, bold=True))
-            # 주황색: 0.5-0.7 (주의)
-            orange_rule = CellIsRule(operator='between', formula=['0.5', '0.7'],
-                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
-            # 빨간색: 0.5 미만 (위험)
-            red_rule = CellIsRule(operator='lessThan', formula=['0.5'],
-                                  font=Font(color=ExcelStyles.RED, bold=True))
-
-            worksheet.conditional_formatting.add(range_str, green_rule)
-            worksheet.conditional_formatting.add(range_str, orange_rule)
-            worksheet.conditional_formatting.add(range_str, red_rule)
-
-        # 기존 조건부 서식도 적용
-        apply_conditional_formatting(worksheet, df, start_row)
-
-        print(f"   ✅ {sheet_name} 향상된 조건부 서식 적용 완료")
+        print(f"   ✅ {sheet_name} 조건부 서식 적용 완료")
 
     except Exception as e:
-        print(f"   ⚠️ 향상된 조건부 서식 적용 중 오류: {e}")
+        print(f"   ⚠️ 조건부 서식 적용 중 오류: {e}")
+
 
 def apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row):
     """
@@ -748,6 +672,7 @@ def apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row):
             worksheet.conditional_formatting.add(range_str, orange_rule)
             worksheet.conditional_formatting.add(range_str, red_rule)
 
+
 def apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row):
     """
     트레이딩 스타일 조건부 서식 적용
@@ -872,7 +797,7 @@ def apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row):
                                     font=Font(color=ExcelStyles.GREEN, bold=True))
             # 주황색: 0.4-0.6 (주의)
             orange_rule = CellIsRule(operator='between', formula=['0.4', '0.6'],
-                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
             # 빨간색: 0.4 미만 또는 0.8 초과 (위험)
             red_rule1 = CellIsRule(operator='lessThan', formula=['0.4'],
                                    font=Font(color=ExcelStyles.RED, bold=True))
@@ -904,6 +829,91 @@ def apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row):
             worksheet.conditional_formatting.add(range_str, green_rule)
             worksheet.conditional_formatting.add(range_str, orange_rule)
             worksheet.conditional_formatting.add(range_str, red_rule)
+
+    # RSI_14 조건부 서식
+    if 'RSI_14' in col_mapping:
+        col_letter = get_column_letter(col_mapping['RSI_14'])
+        range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+        # 초록색: 30-70 (이상적)
+        green_rule = CellIsRule(operator='between', formula=['30', '70'],
+                                font=Font(color=ExcelStyles.GREEN, bold=True))
+        # 주황색: 20-30 또는 70-80 (주의)
+        orange_rule1 = CellIsRule(operator='between', formula=['20', '30'],
+                                  font=Font(color=ExcelStyles.ORANGE, bold=True))
+        orange_rule2 = CellIsRule(operator='between', formula=['70', '80'],
+                                  font=Font(color=ExcelStyles.ORANGE, bold=True))
+        # 빨간색: 20 미만 또는 80 초과 (위험)
+        red_rule1 = CellIsRule(operator='lessThan', formula=['20'],
+                               font=Font(color=ExcelStyles.RED, bold=True))
+        red_rule2 = CellIsRule(operator='greaterThan', formula=['80'],
+                               font=Font(color=ExcelStyles.RED, bold=True))
+
+        worksheet.conditional_formatting.add(range_str, green_rule)
+        worksheet.conditional_formatting.add(range_str, orange_rule1)
+        worksheet.conditional_formatting.add(range_str, orange_rule2)
+        worksheet.conditional_formatting.add(range_str, red_rule1)
+        worksheet.conditional_formatting.add(range_str, red_rule2)
+
+    # MACD_Histogram 조건부 서식
+    if 'MACD_Histogram' in col_mapping:
+        col_letter = get_column_letter(col_mapping['MACD_Histogram'])
+        range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+        # 초록색: 양수 (상승 모멘텀)
+        green_rule = CellIsRule(operator='greaterThan', formula=['0'],
+                                font=Font(color=ExcelStyles.GREEN, bold=True))
+        # 빨간색: 음수 (하락 모멘텀)
+        red_rule = CellIsRule(operator='lessThan', formula=['0'],
+                              font=Font(color=ExcelStyles.RED, bold=True))
+
+        worksheet.conditional_formatting.add(range_str, green_rule)
+        worksheet.conditional_formatting.add(range_str, red_rule)
+
+    # BB_Position 조건부 서식
+    if 'BB_Position' in col_mapping:
+        col_letter = get_column_letter(col_mapping['BB_Position'])
+        range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+        # 초록색: 0.3-0.7 (이상적)
+        green_rule = CellIsRule(operator='between', formula=['0.3', '0.7'],
+                                font=Font(color=ExcelStyles.GREEN, bold=True))
+        # 주황색: 0.2-0.3 또는 0.7-0.8 (주의)
+        orange_rule1 = CellIsRule(operator='between', formula=['0.2', '0.3'],
+                                  font=Font(color=ExcelStyles.ORANGE, bold=True))
+        orange_rule2 = CellIsRule(operator='between', formula=['0.7', '0.8'],
+                                  font=Font(color=ExcelStyles.ORANGE, bold=True))
+        # 빨간색: 0.2 미만 또는 0.8 초과 (위험)
+        red_rule1 = CellIsRule(operator='lessThan', formula=['0.2'],
+                               font=Font(color=ExcelStyles.RED, bold=True))
+        red_rule2 = CellIsRule(operator='greaterThan', formula=['0.8'],
+                               font=Font(color=ExcelStyles.RED, bold=True))
+
+        worksheet.conditional_formatting.add(range_str, green_rule)
+        worksheet.conditional_formatting.add(range_str, orange_rule1)
+        worksheet.conditional_formatting.add(range_str, orange_rule2)
+        worksheet.conditional_formatting.add(range_str, red_rule1)
+        worksheet.conditional_formatting.add(range_str, red_rule2)
+
+    # High_52W_Ratio 조건부 서식
+    if 'High_52W_Ratio' in col_mapping:
+        col_letter = get_column_letter(col_mapping['High_52W_Ratio'])
+        range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+        # 초록색: 0.7-0.95 (이상적)
+        green_rule = CellIsRule(operator='between', formula=['0.7', '0.95'],
+                                font=Font(color=ExcelStyles.GREEN, bold=True))
+        # 주황색: 0.5-0.7 (주의)
+        orange_rule = CellIsRule(operator='between', formula=['0.5', '0.7'],
+                                 font=Font(color=ExcelStyles.ORANGE, bold=True))
+        # 빨간색: 0.5 미만 (위험)
+        red_rule = CellIsRule(operator='lessThan', formula=['0.5'],
+                              font=Font(color=ExcelStyles.RED, bold=True))
+
+        worksheet.conditional_formatting.add(range_str, green_rule)
+        worksheet.conditional_formatting.add(range_str, orange_rule)
+        worksheet.conditional_formatting.add(range_str, red_rule)
+
 
 def apply_excel_styling(writer, sheet_name, df, is_summary=False):
     """
@@ -994,12 +1004,13 @@ def apply_excel_styling(writer, sheet_name, df, is_summary=False):
     except Exception as e:
         print(f"   ⚠️ {sheet_name} 시트 스타일링 중 오류: {e}")
 
+
 def clean_buffett_columns(df, profile_name=None):
     """
     버핏 관련 결과에서 불필요한 컬럼 제거
     """
     # 제거할 컬럼들
-    columns_to_remove = ['CreatedAtUTC', 'Source', 'Debt_to_Equity','BuybackYield','P_FFO','_OpMarginUse']
+    columns_to_remove = ['CreatedAtUTC', 'Source', 'Debt_to_Equity', 'BuybackYield', 'P_FFO', '_OpMarginUse']
 
     # 실제 존재하는 컬럼만 제거
     existing_columns_to_remove = [col for col in columns_to_remove if col in df.columns]
@@ -1021,7 +1032,7 @@ def clean_buffett_columns(df, profile_name=None):
 
     modern_buffett_order = [
         'Ticker', 'Name', 'Sector', 'Industry', 'Price', 'FairValue_Composite',
-        'Discount_Pct','DollarVol($M)', 'PE', 'PEG', 'SMA20', 'SMA50', 'ATR_PCT', 'RVOL',
+        'Discount_Pct', 'DollarVol($M)', 'PE', 'PEG', 'SMA20', 'SMA50', 'ATR_PCT', 'RVOL',
         'RET5', 'RET20', 'MktCap($B)', 'RevYoY', 'OpMarginTTM',
         'OperatingMargins(info)', 'ROE(info)', 'EV_EBITDA', 'FCF_Yield', 'PB',
         'DivYield', 'PayoutRatio', 'FairValue_DCF', 'FairValue_Relative',
@@ -1048,6 +1059,7 @@ def clean_buffett_columns(df, profile_name=None):
         print(f"🔧 {profile_name} 컬럼 순서 적용 완료")
 
     return df
+
 
 def preprocess_data_for_display(results):
     """
@@ -1088,6 +1100,7 @@ def preprocess_data_for_display(results):
         processed_results[profile_name] = df_display
 
     return processed_results
+
 
 def apply_conditional_formatting(worksheet, df, start_row=2):
     """
@@ -1164,6 +1177,7 @@ def apply_conditional_formatting(worksheet, df, start_row=2):
 
     except Exception as e:
         print(f"   ⚠️ 조건부 서식 적용 중 오류: {e}")
+
 
 class EnhancedValuationModels:
     """개선된 기관 스타일 적정가 계산 클래스 (섹터별 차별화)"""
@@ -1267,7 +1281,8 @@ class EnhancedValuationModels:
 
             # EV/EBITDA 비교
             if pd.notna(target_row['EV_EBITDA']) and target_row['EV_EBITDA'] > 0:
-                sector_ev_clean = sector_peers['EV_EBITDA'][(sector_peers['EV_EBITDA'] > 0) & (sector_peers['EV_EBITDA'] < 30)]
+                sector_ev_clean = sector_peers['EV_EBITDA'][
+                    (sector_peers['EV_EBITDA'] > 0) & (sector_peers['EV_EBITDA'] < 30)]
                 if len(sector_ev_clean) >= 3:
                     sector_median_ev_ebitda = sector_ev_clean.median()
                     ev_fair_value = price * (sector_median_ev_ebitda / target_row['EV_EBITDA'])
@@ -1286,7 +1301,7 @@ class EnhancedValuationModels:
 
             # 가중평균 적용 (PER에 더 높은 가중치)
             if len(valuations) >= 2:
-                weights = [0.4] + [0.6/(len(valuations)-1)] * (len(valuations)-1)
+                weights = [0.4] + [0.6 / (len(valuations) - 1)] * (len(valuations) - 1)
                 return np.average(valuations, weights=weights)
             else:
                 return valuations[0]
@@ -1340,6 +1355,7 @@ class EnhancedValuationModels:
 
         except Exception:
             return None
+
 
 def calculate_enhanced_fair_value(df):
     """
@@ -1400,6 +1416,7 @@ def calculate_enhanced_fair_value(df):
 
     return pd.DataFrame(fair_value_data, index=df.index)
 
+
 # 섹터 상수 정의
 FIN_SECTORS = {"banks", "financial", "insurance", "capital markets", "financial services"}
 REIT_SECTORS = {"reit", "real estate", "property"}
@@ -1433,8 +1450,8 @@ CONFIG = {
 
     # 추가 필터 설정
     "OP_MARGIN_EXEMPT_SECTORS": FIN_SECTORS,
-    "MIN_DISCOUNT_PCT": 8.0,        # 8% 할인 (더 현실적)
-    "MAX_DISCOUNT_PCT": 50.0,       # 최대 50% 할인 (지나치게 높은 할인 제외)
+    "MIN_DISCOUNT_PCT": 8.0,  # 8% 할인 (더 현실적)
+    "MAX_DISCOUNT_PCT": 50.0,  # 최대 50% 할인 (지나치게 높은 할인 제외)
 
     # 현대적 버핏 필터 (현실적으로 조정)
     "MODERN_BUFFETT": {
@@ -1483,6 +1500,7 @@ CONFIG = {
         "MACD_CONDITION": "positive",  # MACD 양수 조건
         "BB_CONDITION": "middle",  # 볼린저밴드 중간 위치 선호
         "MIN_52W_RATIO": 0.7,  # 52주 저가 대비 70% 이상
+        "MIN_RET20": -0.05  # 하락 제한 완화
     },
 
     "DAY_FILTERS": {
@@ -1611,10 +1629,11 @@ def get_market_cap_tier(mktcap):
     """시가총액에 따른 티어 반환"""
     if mktcap >= 10_000_000_000:  # 100억 달러 이상
         return "large_cap"
-    elif mktcap >= 500_000_000:   # 5억 달러 이상
+    elif mktcap >= 500_000_000:  # 5억 달러 이상
         return "mid_cap"
-    else:                         # 5억 달러 미만
+    else:  # 5억 달러 미만
         return "small_cap"
+
 
 # 현대적 버핏 필터링 함수들
 def enhanced_buffett_modern_filter(row, cfg):
@@ -1679,6 +1698,7 @@ def calculate_trend_strength(row):
         return np.mean(strength_components)
     else:
         return 0.5
+
 
 def enhanced_pass_buffett_base(row, cfg=CONFIG, debug=False):
     """기술적 지표를 고려한 개선된 버핏 베이스 필터"""
@@ -1802,6 +1822,7 @@ def enhanced_pass_buffett_base(row, cfg=CONFIG, debug=False):
 
     if debug: print(f"  ✅ 모든 필터 통과! (tier: {tier})")
     return True
+
 
 def has_economic_moat(row, cfg):
     """경제적 해자(competitive advantage) 확인"""
@@ -1933,6 +1954,7 @@ def build_modern_buffett_scores(df: pd.DataFrame, cfg=CONFIG):
     )
 
     return temp
+
 
 def create_detailed_explanation_sheets(writer):
     """
@@ -2444,6 +2466,7 @@ def create_detailed_explanation_sheets(writer):
 
     print("   ✅ 색상 기준 설명 시트 추가")
 
+
 def create_styled_excel_output(results, filename):
     """
     상세한 설명 시트가 포함된 엑셀 파일 생성
@@ -2490,6 +2513,7 @@ def create_styled_excel_output(results, filename):
         # 3. 상세한 설명 시트들 생성
         print("📚 상세한 설명 시트 생성 중...")
         create_detailed_explanation_sheets(writer)
+
 
 def enhanced_valuation_screener_with_formatting():
     """
@@ -2645,16 +2669,19 @@ def check_data_quality_issues(df):
     print("   - P_FFO: 리츠(REITs) 전용 지표로 일반 주식에는 적용되지 않음")
     print("   - FCF_Yield, PEG, EV_EBITDA: 계산에 필요한 기초 데이터 부족")
 
+
 def _winsor_series(s: pd.Series, p=0.02):
     s = s.astype(float)
-    lo, hi = s.quantile(p), s.quantile(1-p)
+    lo, hi = s.quantile(p), s.quantile(1 - p)
     return s.clip(lower=lo, upper=hi)
+
 
 def _percentile_rank(s: pd.Series, higher=True):
     s = s.astype(float)
     if not higher:
         s = -s
     return s.rank(pct=True, method="average")
+
 
 def _clip01(x):
     try:
@@ -2711,6 +2738,7 @@ def apply_winsorization_to_whole_dataset(df):
 
     return df_processed
 
+
 def enhanced_build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
     """기술적 지표를 반영한 개선된 버핏 점수 계산"""
     temp = df.copy()
@@ -2733,6 +2761,7 @@ def enhanced_build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
     )
 
     return temp
+
 
 def build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
     """개선된 버핏 스타일 점수 계산 (데이터 누락 대응)"""
@@ -2979,62 +3008,80 @@ def enhanced_build_scores_trading(df: pd.DataFrame, profile, cfg=CONFIG):
 
     return temp
 
+
 def build_scores_trading(df: pd.DataFrame, profile, cfg=CONFIG):
-    temp=df.copy()
-    for col in ["RET5","RET20"]:
-        if col in temp.columns: temp[col]=_winsor_series(temp[col].astype(float).fillna(0), p=0.02)
-        else: temp[col]=0.0
-    mom=np.nanmean([_percentile_rank(temp["RET5"], True),
-                    _percentile_rank(temp["RET20"], True)], axis=0)
-    temp["MomentumScore"]=pd.Series(mom, index=temp.index).fillna(0.5)
+    temp = df.copy()
+    for col in ["RET5", "RET20"]:
+        if col in temp.columns:
+            temp[col] = _winsor_series(temp[col].astype(float).fillna(0), p=0.02)
+        else:
+            temp[col] = 0.0
+    mom = np.nanmean([_percentile_rank(temp["RET5"], True),
+                      _percentile_rank(temp["RET20"], True)], axis=0)
+    temp["MomentumScore"] = pd.Series(mom, index=temp.index).fillna(0.5)
 
-    dl=_percentile_rank(temp["DollarVol($M)"], True) if "DollarVol($M)" in temp.columns else pd.Series(0.5, index=temp.index)
-    rv=_percentile_rank(temp["RVOL"].fillna(1.0), True) if "RVOL" in temp.columns else pd.Series(0.5, index=temp.index)
-    temp["LiquidityScore"]=np.nanmean([dl,rv], axis=0)
+    dl = _percentile_rank(temp["DollarVol($M)"], True) if "DollarVol($M)" in temp.columns else pd.Series(0.5,
+                                                                                                         index=temp.index)
+    rv = _percentile_rank(temp["RVOL"].fillna(1.0), True) if "RVOL" in temp.columns else pd.Series(0.5,
+                                                                                                   index=temp.index)
+    temp["LiquidityScore"] = np.nanmean([dl, rv], axis=0)
 
-    close=temp["Price"]; s20=temp["SMA20"]; s50=temp["SMA50"]
-    trend=[]
+    close = temp["Price"];
+    s20 = temp["SMA20"];
+    s50 = temp["SMA50"]
+    trend = []
     for i in temp.index:
-        c,sma20,sma50=close[i], s20[i], s50[i]
-        score=0.5
+        c, sma20, sma50 = close[i], s20[i], s50[i]
+        score = 0.5
         try:
             if (c is not None) and (sma20 is not None) and (sma50 is not None):
-                if c>sma20>sma50: score=1.0
-                elif c>sma20: score=0.75
-                elif sma20 and sma50 and sma20>sma50: score=0.65
-                else: score=0.25
-        except Exception: score=0.5
+                if c > sma20 > sma50:
+                    score = 1.0
+                elif c > sma20:
+                    score = 0.75
+                elif sma20 and sma50 and sma20 > sma50:
+                    score = 0.65
+                else:
+                    score = 0.25
+        except Exception:
+            score = 0.5
         trend.append(score)
-    temp["TrendScore"]=pd.Series([_clip01(x) for x in trend], index=temp.index)
+    temp["TrendScore"] = pd.Series([_clip01(x) for x in trend], index=temp.index)
 
-    flt = cfg["SWING_FILTERS"] if profile=="swing" else cfg["DAY_FILTERS"]
-    lo,hi = flt["ATR_PCT_RANGE"]; target=(lo+hi)/2.0; sigma=(hi-lo)/2.0
-    vols=[]
+    flt = cfg["SWING_FILTERS"] if profile == "swing" else cfg["DAY_FILTERS"]
+    lo, hi = flt["ATR_PCT_RANGE"];
+    target = (lo + hi) / 2.0;
+    sigma = (hi - lo) / 2.0
+    vols = []
     for v in temp["ATR_PCT"].fillna(target):
-        try: s=math.exp(-((float(v)-target)**2)/(2*(sigma**2)))
-        except Exception: s=0.5
+        try:
+            s = math.exp(-((float(v) - target) ** 2) / (2 * (sigma ** 2)))
+        except Exception:
+            s = 0.5
         vols.append(s)
-    temp["VolatilityScore"]=pd.Series([_clip01(x) for x in vols], index=temp.index)
+    temp["VolatilityScore"] = pd.Series([_clip01(x) for x in vols], index=temp.index)
 
-    weights = {"swing":{"momentum":0.45,"trend":0.25,"liquidity":0.20,"volatility":0.10},
-               "daytrade":{"momentum":0.30,"trend":0.10,"liquidity":0.40,"volatility":0.20}}[profile]
-    temp["TotalScore"]=100*(weights["momentum"]*temp["MomentumScore"]
-                           +weights["trend"]*temp["TrendScore"]
-                           +weights["liquidity"]*temp["LiquidityScore"]
-                           +weights["volatility"]*temp["VolatilityScore"])
+    weights = {"swing": {"momentum": 0.45, "trend": 0.25, "liquidity": 0.20, "volatility": 0.10},
+               "daytrade": {"momentum": 0.30, "trend": 0.10, "liquidity": 0.40, "volatility": 0.20}}[profile]
+    temp["TotalScore"] = 100 * (weights["momentum"] * temp["MomentumScore"]
+                                + weights["trend"] * temp["TrendScore"]
+                                + weights["liquidity"] * temp["LiquidityScore"]
+                                + weights["volatility"] * temp["VolatilityScore"])
     return temp
+
 
 def load_cache(path):
     if not os.path.exists(path):
         raise FileNotFoundError(f"Details cache not found: {path}")
-    df=pd.read_csv(path)
+    df = pd.read_csv(path)
     # 타입 보정
-    num_cols=["Price","DollarVol($M)","SMA20","SMA50","ATR_PCT","RVOL","RET5","RET20",
-              "MktCap($B)","RevYoY","OpMarginTTM","OperatingMargins(info)","ROE(info)","EV_EBITDA",
-              "PE","PEG","FCF_Yield","PB","DivYield","P_FFO","BuybackYield"]
+    num_cols = ["Price", "DollarVol($M)", "SMA20", "SMA50", "ATR_PCT", "RVOL", "RET5", "RET20",
+                "MktCap($B)", "RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)", "EV_EBITDA",
+                "PE", "PEG", "FCF_Yield", "PB", "DivYield", "P_FFO", "BuybackYield"]
     for c in num_cols:
-        if c in df.columns: df[c]=pd.to_numeric(df[c], errors="coerce")
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
 
 def enhanced_technical_screener():
     """
@@ -3056,8 +3103,9 @@ def enhanced_technical_screener():
     raw_lite = df[mask_lite].copy()
     if not raw_lite.empty:
         scored_lite = enhanced_build_scores_buffett(raw_lite, CONFIG)
-        scored_lite = scored_lite[scored_lite['TotalScore_Enhanced'] >= 60]
-        results["buffett_lite_tech"] = scored_lite.sort_values("TotalScore_Enhanced", ascending=False)
+        scored_lite = scored_lite[scored_lite['TotalScore'] >= 60]
+        scored_lite = clean_buffett_columns(scored_lite, 'buffett_lite')
+        results["buffett_lite"] = scored_lite.sort_values("TotalScore", ascending=False)
 
     # 2. 기술적 지표 반영 버핏-Strict
     strict_cfg = CONFIG.copy()
@@ -3076,8 +3124,9 @@ def enhanced_technical_screener():
     raw_strict = df[mask_strict].copy()
     if not raw_strict.empty:
         scored_strict = enhanced_build_scores_buffett(raw_strict, strict_cfg)
-        scored_strict = scored_strict[scored_strict['TotalScore_Enhanced'] >= 70]
-        results["buffett_strict_tech"] = scored_strict.sort_values("TotalScore_Enhanced", ascending=False)
+        scored_strict = scored_strict[scored_strict['TotalScore'] >= 70]
+        scored_strict = clean_buffett_columns(scored_strict, 'buffett_strict')
+        results["buffett_strict"] = scored_strict.sort_values("TotalScore", ascending=False)
 
     # 3. 현대적 버핏 (기술적 지표 반영)
     mask_modern = df.apply(lambda r: enhanced_buffett_modern_filter(r, CONFIG), axis=1)
@@ -3092,13 +3141,14 @@ def enhanced_technical_screener():
             tech_scores.append(tech_score)
 
         scored_modern["TechnicalScore"] = pd.Series(tech_scores, index=scored_modern.index)
-        scored_modern["TotalScore_Modern_Enhanced"] = (
-                scored_modern["TotalScore_Modern"] * 0.9 +
+        scored_modern["TotalScore"] = (
+                scored_modern["TotalScore"] * 0.9 +
                 scored_modern["TechnicalScore"] * 100 * 0.1
         )
 
-        scored_modern = scored_modern[scored_modern['TotalScore_Modern_Enhanced'] >= 70]
-        results["modern_buffett_tech"] = scored_modern.sort_values("TotalScore_Modern_Enhanced", ascending=False)
+        scored_modern = scored_modern[scored_modern['TotalScore'] >= 70]
+        scored_modern = clean_buffett_columns(scored_modern, 'modern_buffett')
+        results["modern_buffett"] = scored_modern.sort_values("TotalScore", ascending=False)
 
     # 4. 기술적 지표 강화 트레이딩 프로파일
     for prof in ("swing", "daytrade"):
@@ -3116,7 +3166,7 @@ def enhanced_technical_screener():
                 "TechnicalScore", "TotalScore"
             ]
             trading_cols = [c for c in trading_cols if c in scored.columns]
-            results[f"{prof}_tech"] = scored[trading_cols].sort_values("TotalScore", ascending=False)
+            results[f"{prof}"] = scored[trading_cols].sort_values("TotalScore", ascending=False)
 
     # 결과 출력
     print("\n=== 기술적 지표 기반 스크리닝 결과 ===")
@@ -3138,7 +3188,19 @@ def enhanced_technical_screener():
 
         print(f"\n💾 결과 저장: {out_name}")
 
+    print("\n🎨 엑셀 스타일링 및 상세 설명 추가 중...")
+    create_styled_excel_output(results, out_name)
+
+    print(f"\n🎯 COMPREHENSIVE SCREENER 완료: {out_name}")
+    print("📚 포함된 설명 시트:")
+    print("   - 버핏_지표_설명: 41개 버핏 프로파일 지표 상세 설명")
+    print("   - 트레이딩_지표_설명: 16개 트레이딩 지표 상세 설명")
+    print("   - 프로파일_비교: 5개 프로파일 특징 비교")
+    print("   - ROE_비교_설명: ROE(info) vs ROE_5Y_Avg 비교 설명")
+
+
     return results
+
 
 def enhanced_pass_trading(row, profile, cfg=CONFIG):
     """기술적 지표를 고려한 개선된 트레이딩 필터"""
@@ -3220,28 +3282,33 @@ def enhanced_pass_trading(row, profile, cfg=CONFIG):
 
     return True
 
+
 def pass_trading(row, profile, cfg=CONFIG):
-    f = cfg["SWING_FILTERS"] if profile=="swing" else cfg["DAY_FILTERS"]
-    price=row.get("Price"); dv=(row.get("DollarVol($M)") or 0)*1_000_000
-    rvol=row.get("RVOL"); atr=row.get("ATR_PCT")
+    f = cfg["SWING_FILTERS"] if profile == "swing" else cfg["DAY_FILTERS"]
+    price = row.get("Price");
+    dv = (row.get("DollarVol($M)") or 0) * 1_000_000
+    rvol = row.get("RVOL");
+    atr = row.get("ATR_PCT")
     if price is None or dv is None: return False
     if price < f["MIN_PRICE"] or dv < f["MIN_DOLLAR_VOLUME"]: return False
     if (rvol is None) or (rvol < f["MIN_RVOL"]): return False
-    lo,hi = f["ATR_PCT_RANGE"]
+    lo, hi = f["ATR_PCT_RANGE"]
     if (atr is None) or (atr < lo) or (atr > hi): return False
-    rule=f.get("TREND_RULE","any").lower()
-    sma20=row.get("SMA20"); sma50=row.get("SMA50")
-    if rule=="close>sma20>sma50":
-        if not (price and sma20 and sma50 and (price>sma20>sma50)): return False
-    elif rule=="sma20>50":
-        if not (sma20 and sma50 and sma20>sma50): return False
-    if profile=="swing":
-        ret20=row.get("RET20")
+    rule = f.get("TREND_RULE", "any").lower()
+    sma20 = row.get("SMA20");
+    sma50 = row.get("SMA50")
+    if rule == "close>sma20>sma50":
+        if not (price and sma20 and sma50 and (price > sma20 > sma50)): return False
+    elif rule == "sma20>50":
+        if not (sma20 and sma50 and sma20 > sma50): return False
+    if profile == "swing":
+        ret20 = row.get("RET20")
         if ret20 is not None and ret20 < f["MIN_RET20"]: return False
-    if profile=="daytrade":
-        ret5=row.get("RET5")
+    if profile == "daytrade":
+        ret5 = row.get("RET5")
         if ret5 is not None and ret5 < f["MIN_RET5"]: return False
     return True
+
 
 if __name__ == "__main__":
     print("🚀 기술적 지표 강화 스크리너 실행 중...")
