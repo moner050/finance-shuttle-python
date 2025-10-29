@@ -1,17 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-build_details_cache.py
-
-유니버스(US_ALL/SP500/커스텀)를 불러와 OHLCV(기본 120d)에서 라이트 지표(Price, DollarVol, RVOL, ATR_PCT 등)를 전종목 산출
-→ 라이트 컷 통과 종목(및 상위 DETAILED_TOP_K)에 한해 재무 지표(RevYoY, OpMarginTTM, EV/EBITDA, FCFY 등)까지 수집
-→ 단일 캐시 파일(details_cache_{source}.csv / .xlsx)에 저장
+build_details_cache_enhanced.py
 
 개선사항:
-1. 누락된 재무 데이터 yfinance로 보완
-2. EV/EBITDA 계산 로직 강화
-3. FCF Yield 계산 방식 개선
-4. 재무 데이터 품질 향상
-5. 에러 처리 보완
+1. PER 데이터 계산 로직 강화 (여러 방법론 적용)
+2. 최신 트렌드 지표 추가 (RSI, MACD, 볼린저밴드, 52주 고저가 등)
+3. 재무 데이터 품질 향상
+4. 성장성 지표 추가
 """
 
 import os, io, time, math, random, warnings, logging, requests
@@ -33,8 +28,7 @@ CONFIG = {
     "OUT_BASENAME": "",  # 비우면 자동: details_cache_{source}.csv
     "INCLUDE_EXCEL": True,
 
-    # OHLCV 프리로드(라이트 지표)
-    "PRELOAD_PERIOD": "120d",
+    "PRELOAD_PERIOD": "252d",  # 1년 데이터로 확대 (52주 계산용)
     "PRELOAD_CHUNK": 50,
     "BATCH_RETRIES": 5,
     "SINGLE_RETRIES": 3,
@@ -74,6 +68,181 @@ session.headers.update({"User-Agent": CONFIG["USER_AGENT"]})
 if CONFIG["PROXY_SETTINGS"]:
     session.proxies.update(CONFIG["PROXY_SETTINGS"])
 
+
+# ============== 기술적 지표 계산 함수들 ==============
+
+def calculate_rsi(prices, window=14):
+    """RSI 계산"""
+    if len(prices) < window + 1:
+        return None
+
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.iloc[-1] if not rsi.empty else None
+
+
+def calculate_macd(prices, fast=12, slow=26, signal=9):
+    """MACD 계산"""
+    if len(prices) < slow + signal:
+        return None, None, None
+
+    ema_fast = prices.ewm(span=fast).mean()
+    ema_slow = prices.ewm(span=slow).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal).mean()
+    histogram = macd_line - signal_line
+
+    return (
+        macd_line.iloc[-1] if not macd_line.empty else None,
+        signal_line.iloc[-1] if not signal_line.empty else None,
+        histogram.iloc[-1] if not histogram.empty else None
+    )
+
+
+def calculate_bollinger_bands(prices, window=20, num_std=2):
+    """볼린저밴드 계산"""
+    if len(prices) < window:
+        return None, None, None
+
+    sma = prices.rolling(window).mean()
+    std = prices.rolling(window).std()
+    upper = sma + (std * num_std)
+    lower = sma - (std * num_std)
+
+    current_price = prices.iloc[-1]
+    bb_position = (current_price - lower.iloc[-1]) / (upper.iloc[-1] - lower.iloc[-1]) if upper.iloc[-1] != lower.iloc[
+        -1] else None
+
+    return (
+        upper.iloc[-1] if not upper.empty else None,
+        lower.iloc[-1] if not lower.empty else None,
+        bb_position
+    )
+
+def calculate_52week_high_low(prices):
+    """52주 고가/저가 계산"""
+    if len(prices) < 252:  # 1년 거래일
+        high_52w = prices.max()
+        low_52w = prices.min()
+    else:
+        high_52w = prices.tail(252).max()
+        low_52w = prices.tail(252).min()
+
+    current_price = prices.iloc[-1]
+    high_ratio = current_price / high_52w if high_52w > 0 else None
+    low_ratio = current_price / low_52w if low_52w > 0 else None
+
+    return high_52w, low_52w, high_ratio, low_ratio
+
+
+# ============== 강화된 PER 계산 함수 ==============
+
+def calculate_pe_ratio(ticker, price, info, df_q, df_a):
+    """강화된 PER 계산 (4가지 방법 시도)"""
+    pe_values = []
+
+    # 방법 1: yfinance info에서 직접 가져오기
+    try:
+        trailing_pe = info.get("trailingPE")
+        forward_pe = info.get("forwardPE")
+        if trailing_pe and trailing_pe > 0:
+            pe_values.append(trailing_pe)
+        if forward_pe and forward_pe > 0:
+            pe_values.append(forward_pe)
+    except:
+        pass
+
+    # 방법 2: trailing EPS 사용
+    try:
+        trailing_eps = info.get("trailingEps")
+        if trailing_eps and trailing_eps > 0 and price and price > 0:
+            pe_calculated = price / trailing_eps
+            if 0 < pe_calculated < 1000:  # 합리적인 범위 체크
+                pe_values.append(pe_calculated)
+    except:
+        pass
+
+    # 방법 3: 분기별 데이터로 TTM EPS 계산
+    try:
+        if df_q is not None and not df_q.empty and df_a is not None and not df_a.empty:
+            # EPS 행 찾기
+            eps_aliases = ["diluted eps", "basic eps", "eps (diluted)", "eps (basic)", "earnings per share", "eps"]
+            eps_row = None
+            for alias in eps_aliases:
+                if alias in [str(x).lower() for x in df_q.index]:
+                    eps_row = [x for x in df_q.index if str(x).lower() == alias][0]
+                    break
+
+            if eps_row is None:
+                # EPS가 없으면 순이익/주식수로 계산
+                ni_aliases = ["net income", "net income common stockholders"]
+                shares_aliases = ["diluted average shares", "weighted average shares diluted"]
+
+                ni_row = None
+                shares_row = None
+
+                for alias in ni_aliases:
+                    if alias in [str(x).lower() for x in df_q.index]:
+                        ni_row = [x for x in df_q.index if str(x).lower() == alias][0]
+                        break
+
+                for alias in shares_aliases:
+                    if alias in [str(x).lower() for x in df_a.index]:
+                        shares_row = [x for x in df_a.index if str(x).lower() == alias][0]
+                        break
+
+                if ni_row and shares_row:
+                    # 최근 4분기 합계 계산
+                    cols = sorted(df_q.columns, reverse=True)[:4]
+                    ni_ttm = pd.to_numeric(df_q.loc[ni_row, cols], errors="coerce").sum()
+                    shares = pd.to_numeric(df_a.loc[shares_row, cols[0]], errors="coerce")
+
+                    if ni_ttm and shares and shares > 0:
+                        eps_ttm = ni_ttm / shares
+                        if eps_ttm > 0 and price > 0:
+                            pe_calculated = price / eps_ttm
+                            if 0 < pe_calculated < 1000:
+                                pe_values.append(pe_calculated)
+            else:
+                # EPS 행이 있는 경우
+                cols = sorted(df_q.columns, reverse=True)[:4]
+                eps_ttm = pd.to_numeric(df_q.loc[eps_row, cols], errors="coerce").sum()
+                if eps_ttm and eps_ttm > 0 and price > 0:
+                    pe_calculated = price / eps_ttm
+                    if 0 < pe_calculated < 1000:
+                        pe_values.append(pe_calculated)
+    except Exception as e:
+        print(f"PER 계산 방법 3 실패 {ticker}: {e}")
+
+    # 방법 4: 연간 데이터 사용
+    try:
+        if df_a is not None and not df_a.empty:
+            eps_aliases = ["diluted eps", "basic eps", "eps (diluted)", "eps (basic)", "earnings per share", "eps"]
+            eps_row = None
+            for alias in eps_aliases:
+                if alias in [str(x).lower() for x in df_a.index]:
+                    eps_row = [x for x in df_a.index if str(x).lower() == alias][0]
+                    break
+
+            if eps_row:
+                latest_col = sorted(df_a.columns, reverse=True)[0]
+                eps_annual = pd.to_numeric(df_a.loc[eps_row, latest_col], errors="coerce")
+                if eps_annual and eps_annual > 0 and price > 0:
+                    pe_calculated = price / eps_annual
+                    if 0 < pe_calculated < 1000:
+                        pe_values.append(pe_calculated)
+    except Exception as e:
+        print(f"PER 계산 방법 4 실패 {ticker}: {e}")
+
+    # 유효한 PER 값들 중 중간값 반환
+    valid_pes = [pe for pe in pe_values if pe is not None and 0 < pe < 1000]
+    if valid_pes:
+        return np.median(valid_pes)
+
+    return None
 
 def _normalize_ticker(t):
     return str(t).strip().upper().replace(".", "-")
@@ -258,24 +427,28 @@ def load_universe():
 
 # ============== OHLCV → 라이트 지표 ==============
 
-def _compute_ta_single(c, h, l, v):
-    """단일 종목 기술적 지표 계산"""
+def _compute_enhanced_ta_single(c, h, l, v):
+    """개선된 기술적 지표 계산 (신규 지표 추가)"""
     try:
-        if c is None or len(c.dropna()) < 5:
+        if c is None or len(c.dropna()) < 50:  # 최소 데이터 요구량 증가
             return None
 
-        c = c.dropna()
-        if len(c) == 0:
+        c_clean = c.dropna()
+        if len(c_clean) == 0:
             return None
 
-        last_close = float(c.iloc[-1])
+        last_close = float(c_clean.iloc[-1])
 
-        s20 = c.rolling(20).mean().iloc[-1] if len(c) >= 20 else None
-        s50 = c.rolling(50).mean().iloc[-1] if len(c) >= 50 else None
+        # 기본 지표들
+        s20 = c_clean.rolling(20).mean().iloc[-1] if len(c_clean) >= 20 else None
+        s50 = c_clean.rolling(50).mean().iloc[-1] if len(c_clean) >= 50 else None
+        s200 = c_clean.rolling(200).mean().iloc[-1] if len(c_clean) >= 200 else None
 
-        ret5 = c.pct_change(5).iloc[-1] if len(c) >= 6 else None
-        ret20 = c.pct_change(20).iloc[-1] if len(c) >= 21 else None
+        ret5 = c_clean.pct_change(5).iloc[-1] if len(c_clean) >= 6 else None
+        ret20 = c_clean.pct_change(20).iloc[-1] if len(c_clean) >= 21 else None
+        ret63 = c_clean.pct_change(63).iloc[-1] if len(c_clean) >= 64 else None  # 3개월 수익률
 
+        # 거래량 지표
         avg20_vol = today_vol = rvol = None
         if v is not None and len(v.dropna()) > 0:
             v_clean = v.dropna()
@@ -283,11 +456,12 @@ def _compute_ta_single(c, h, l, v):
             today_vol = float(v_clean.iloc[-1]) if len(v_clean) > 0 else None
             rvol = today_vol / avg20_vol if avg20_vol and avg20_vol > 0 else 1.0
 
+        # ATR
         atr = atr_pct = None
         if h is not None and l is not None and len(h.dropna()) > 0 and len(l.dropna()) > 0:
             h_clean, l_clean = h.dropna(), l.dropna()
-            if len(h_clean) >= 2 and len(l_clean) >= 2:
-                prev_close = c.shift(1)
+            if len(h_clean) >= 14 and len(l_clean) >= 14:
+                prev_close = c_clean.shift(1)
                 tr = pd.concat([
                     h_clean - l_clean,
                     (h_clean - prev_close).abs(),
@@ -296,20 +470,48 @@ def _compute_ta_single(c, h, l, v):
                 atr = float(tr.rolling(14).mean().iloc[-1]) if len(tr) >= 14 else None
                 atr_pct = (atr / last_close) if atr and last_close > 0 else None
 
+        # 신규 기술적 지표들
+        rsi_14 = calculate_rsi(c_clean, 14)
+        macd, macd_signal, macd_histogram = calculate_macd(c_clean)
+        bb_upper, bb_lower, bb_position = calculate_bollinger_bands(c_clean)
+        high_52w, low_52w, high_52w_ratio, low_52w_ratio = calculate_52week_high_low(c_clean)
+
+        # 모멘텀 지표
+        momentum_12m = (last_close / c_clean.iloc[-252]) - 1 if len(c_clean) >= 252 else None
+        volatility_21d = c_clean.pct_change().rolling(21).std().iloc[-1] if len(c_clean) >= 22 else None
+
         return {
+            # 기본 지표
             "last_price": last_close,
             "sma20": float(s20) if s20 else None,
             "sma50": float(s50) if s50 else None,
+            "sma200": float(s200) if s200 else None,
             "ret5": float(ret5) if ret5 else None,
             "ret20": float(ret20) if ret20 else None,
+            "ret63": float(ret63) if ret63 else None,
             "avg20_vol": avg20_vol,
             "today_vol": today_vol,
             "rvol": rvol,
             "atr": atr,
-            "atr_pct": atr_pct
+            "atr_pct": atr_pct,
+
+            # 신규 기술적 지표
+            "rsi_14": rsi_14,
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "macd_histogram": macd_histogram,
+            "bb_upper": bb_upper,
+            "bb_lower": bb_lower,
+            "bb_position": bb_position,
+            "high_52w": high_52w,
+            "low_52w": low_52w,
+            "high_52w_ratio": high_52w_ratio,
+            "low_52w_ratio": low_52w_ratio,
+            "momentum_12m": momentum_12m,
+            "volatility_21d": volatility_21d,
         }
     except Exception as e:
-        print(f"TA 계산 실패: {e}")
+        print(f"향상된 TA 계산 실패: {e}")
         return None
 
 
@@ -334,7 +536,7 @@ def _compute_ta_metrics(df):
                     l = df[("Low", t)].dropna() if ("Low", t) in df.columns else None
                     v = df[("Volume", t)].dropna() if ("Volume", t) in df.columns else None
 
-                    metrics = _compute_ta_single(c, h, l, v)
+                    metrics = _compute_enhanced_ta_single(c, h, l, v)
                     if metrics:
                         out[t] = metrics
                 except Exception:
@@ -346,7 +548,7 @@ def _compute_ta_metrics(df):
             l = df["Low"] if "Low" in df.columns else None
             v = df["Volume"] if "Volume" in df.columns else None
 
-            metrics = _compute_ta_single(c, h, l, v)
+            metrics = _compute_enhanced_ta_single(c, h, l, v)
             if metrics:
                 out["__SINGLE__"] = metrics
 
@@ -544,18 +746,12 @@ def preload_ohlcv_light(tickers, period="120d", chunk=50, **kwargs):
 
 # ============== 상세 재무 유틸 ==============
 REV_ALIASES = ["total revenue", "revenues", "revenue", "net sales", "sales", "total net sales"]
-OP_ALIASES = ["operating income", "operating income (loss)", "income from operations", "operating profit",
-              "operating profit (loss)", "ebit"]
+OP_ALIASES = ["operating income", "operating income (loss)", "income from operations", "operating profit", "operating profit (loss)", "ebit"]
 FCF_ALIASES = ["free cash flow", "free cashflow", "freecashflow"]
 DA_ALIASES = ["depreciation", "depreciation & amortization", "depreciation and amortization"]
 EPS_ALIASES = ["diluted eps", "basic eps", "eps (diluted)", "eps (basic)", "earnings per share", "eps"]
 NET_INCOME_ALIASES = ["net income", "net income common stockholders", "net income applicable to common shares"]
-DIL_SHARES_ALIASES = ["diluted average shares", "weighted average shares diluted",
-                      "weighted average diluted shares outstanding", "weighted average diluted shares",
-                      "weighted average shares - diluted", "weighted average number of shares diluted"]
-FIN_SECTORS = {"banks", "financial", "insurance", "capital markets"}
-REIT_SECTORS = {"reit", "real estate", "property"}
-
+DIL_SHARES_ALIASES = ["diluted average shares", "weighted average shares diluted", "weighted average diluted shares outstanding", "weighted average diluted shares", "weighted average shares - diluted", "weighted average number of shares diluted"]
 
 def _find_row(index_like, aliases, exclude=None):
     if index_like is None: return None
@@ -870,32 +1066,13 @@ def calculate_missing_financials(ticker, info, df_q, df_a, cf_q, balance_a, pric
     return calculated
 
 
-def fetch_details_for_ticker(tkr, price, avg_vol):
-    """상세 데이터 수집 - 개선된 버전"""
+def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
+    """개선된 상세 데이터 수집 (PER 계산 강화 및 신규 지표 추가)"""
     try:
         t = yf.Ticker(tkr)
         info = t.get_info() or {}
     except Exception as e:
-        return {
-            "Ticker": tkr,
-            "Name": tkr,
-            "Sector": None,
-            "Industry": None,
-            "MktCap($B)": None,
-            "Price": round(price, 2) if price is not None else None,
-            "DollarVol($M)": None,
-            "RevYoY": None,
-            "OpMarginTTM": None,
-            "OperatingMargins(info)": None,
-            "ROE(info)": None,
-            "EV_EBITDA": None,
-            "PE": None,
-            "PEG": None,
-            "FCF_Yield": None,
-            "PB": None,
-            "DivYield": None,
-            "PayoutRatio": None,
-        }
+        return _create_default_record(tkr, price, avg_vol)
 
     try:
         mktcap = info.get("marketCap")
@@ -913,64 +1090,37 @@ def fetch_details_for_ticker(tkr, price, avg_vol):
         cf_q = _safe_df(lambda: t.quarterly_cashflow)
         balance_a = _safe_df(lambda: t.balance_sheet)
 
-        # 기본 데이터 수집
-        rev_yoy = None
-        op_margin = None
+        # 강화된 PER 계산
+        pe_enhanced = calculate_pe_ratio(tkr, price, info, q_is, a_is)
 
-        if q_is is not None and not q_is.empty:
-            rev_row = _find_row(q_is.index, REV_ALIASES, exclude=["per share", "operating revenue", "royalty"])
-            op_row = _find_row(q_is.index, OP_ALIASES)
+        # PEG 계산
+        peg_enhanced = None
+        if pe_enhanced and pe_enhanced > 0:
+            try:
+                # earnings growth rate 시도
+                earnings_growth = info.get("earningsGrowth") or info.get("earningsQuarterlyGrowth")
+                if earnings_growth and earnings_growth > 0:
+                    peg_enhanced = pe_enhanced / (earnings_growth * 100)
+                else:
+                    # EPS 성장률로 계산 시도
+                    eps_series = get_eps_annual_series(t)
+                    eps_cagr = eps_cagr_from_series(eps_series, 3, 5)
+                    if eps_cagr and eps_cagr > 0:
+                        peg_enhanced = pe_enhanced / (eps_cagr * 100)
+            except:
+                pass
 
-            if rev_row:
-                rev_ttm = ttm_sum(q_is, rev_row, 4)
-                rev_yoy = ttm_yoy_growth(q_is, rev_row)
-
-                if rev_yoy is None and a_is is not None and not a_is.empty and rev_row in a_is.index:
-                    rev_yoy = annual_yoy_growth(a_is, rev_row)
-
-            if op_row and rev_ttm and rev_ttm > 0:
-                op_ttm = ttm_sum(q_is, op_row, 4)
-                if op_ttm:
-                    op_margin = op_ttm / rev_ttm
+        # 기본 재무 데이터
+        rev_yoy, op_margin = _calculate_financial_ratios(q_is, a_is)
 
         # EV/EBITDA 계산
-        ev = info.get("enterpriseValue")
-        ebitda = info.get("ebitda")
-        ev_ebitda = None
-
-        try:
-            if ev and ebitda and float(ebitda) > 0:
-                ev_ebitda = float(ev) / float(ebitda)
-        except (TypeError, ValueError):
-            pass
-
-        # PER/PEG 계산
-        pe = safe_pe(price, info, q_is, a_is)
-        peg = info.get("pegRatio")
-
-        if (peg is None or math.isnan(peg)) and pe is not None:
-            try:
-                peg = estimate_peg_from_earnings_trend(t, pe) or estimate_peg_from_eps_cagr(t, pe, 3, 5)
-            except Exception:
-                peg = None
+        ev_ebitda = _calculate_ev_ebitda(info, q_is)
 
         # FCF Yield 계산
-        fcf_yield = None
-        if cf_q is not None and not cf_q.empty:
-            fcf_row = _find_row(cf_q.index, FCF_ALIASES)
-            if fcf_row:
-                fcf_ttm = ttm_sum(cf_q, fcf_row, 4)
-                if fcf_ttm and ev and float(ev) > 0:
-                    fcf_yield = float(fcf_ttm) / float(ev)
+        fcf_yield = _calculate_fcf_yield(info, cf_q)
 
-        # 배당수익률
-        div_yield = None
-        try:
-            div_yield = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
-            if div_yield and isinstance(div_yield, str):
-                div_yield = float(div_yield.strip('%')) / 100
-        except (TypeError, ValueError, AttributeError):
-            div_yield = None
+        # 성장성 지표 추가
+        growth_indicators = _calculate_growth_indicators(q_is, a_is, info)
 
         # 기본 레코드 생성
         rec = {
@@ -981,78 +1131,177 @@ def fetch_details_for_ticker(tkr, price, avg_vol):
             "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
             "Price": round(price, 2) if price is not None else None,
             "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
+
+            # 재무 지표
             "RevYoY": rev_yoy,
             "OpMarginTTM": op_margin,
             "OperatingMargins(info)": info.get("operatingMargins"),
             "ROE(info)": info.get("returnOnEquity"),
+            "ROA(info)": info.get("returnOnAssets"),
             "EV_EBITDA": ev_ebitda,
-            "PE": pe,
-            "PEG": peg,
+            "PE": pe_enhanced,  # 강화된 PER 사용
+            "PEG": peg_enhanced,
             "FCF_Yield": fcf_yield,
             "PB": info.get("priceToBook") or info.get("priceToBookRatio"),
-            "DivYield": div_yield,
+            "PS": info.get("priceToSalesTrailing12Months"),
+            "DivYield": info.get("dividendYield") or info.get("trailingAnnualDividendYield"),
             "PayoutRatio": info.get("payoutRatio"),
+
+            # 신규 성장성 지표
+            **growth_indicators,
+
+            # 기타 유용한 정보
+            "Beta": info.get("beta"),
+            "ShortPercent": info.get("shortPercentOfFloat"),
+            "InsiderOwnership": info.get("heldPercentInsiders"),
+            "InstitutionOwnership": info.get("heldPercentInstitutions"),
         }
 
         # 누락된 데이터 계산으로 보완
         calculated = calculate_missing_financials(tkr, info, q_is, a_is, cf_q, balance_a, price)
-
-        # 계산된 값으로 누락된 데이터 채우기
         for key, value in calculated.items():
             if rec.get(key) is None and value is not None:
                 rec[key] = value
-
-        # OperatingMargins(info)가 없으면 OpMarginTTM 사용
-        if rec.get("OperatingMargins(info)") is None and rec.get("OpMarginTTM") is not None:
-            rec["OperatingMargins(info)"] = rec["OpMarginTTM"]
 
         return rec
 
     except Exception as e:
         print(f"종목 {tkr} 상세 데이터 수집 중 에러: {str(e)}")
-        return {
-            "Ticker": tkr,
-            "Name": info.get("longName") or info.get("shortName") or tkr,
-            "Sector": info.get("sector"),
-            "Industry": info.get("industry"),
-            "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
-            "Price": round(price, 2) if price is not None else None,
-            "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
-            "RevYoY": None,
-            "OpMarginTTM": None,
-            "OperatingMargins(info)": None,
-            "ROE(info)": None,
-            "EV_EBITDA": None,
-            "PE": None,
-            "PEG": None,
-            "FCF_Yield": None,
-            "PB": None,
-            "DivYield": None,
-            "PayoutRatio": None,
-        }
+        return _create_default_record(tkr, price, avg_vol, info)
 
 
-def build_details_cache():
-    """캐시 빌드 함수 - _x, _y 접미사 문제 해결"""
+def _create_default_record(tkr, price, avg_vol, info=None):
+    """기본 레코드 생성"""
+    if info is None:
+        info = {}
+
+    mktcap = info.get("marketCap")
+    dollar_vol = (float(price) * float(avg_vol)) if (price is not None and avg_vol is not None) else None
+
+    return {
+        "Ticker": tkr,
+        "Name": info.get("longName") or info.get("shortName") or tkr,
+        "Sector": info.get("sector"),
+        "Industry": info.get("industry"),
+        "MktCap($B)": round((mktcap or 0) / 1_000_000_000, 2) if mktcap else None,
+        "Price": round(price, 2) if price is not None else None,
+        "DollarVol($M)": round((dollar_vol or 0) / 1_000_000, 2) if dollar_vol is not None else None,
+        # 재무 지표
+        "RevYoY": None, "OpMarginTTM": None, "OperatingMargins(info)": None,
+        "ROE(info)": None, "ROA(info)": None, "EV_EBITDA": None, "PE": None,
+        "PEG": None, "FCF_Yield": None, "PB": None, "PS": None, "DivYield": None,
+        "PayoutRatio": None,
+        # 성장성 지표
+        "EPS_Growth_3Y": None, "Revenue_Growth_3Y": None, "EBITDA_Growth_3Y": None,
+        # 기타
+        "Beta": None, "ShortPercent": None, "InsiderOwnership": None, "InstitutionOwnership": None,
+    }
+
+def _calculate_financial_ratios(q_is, a_is):
+    """재무 비율 계산"""
+    rev_yoy = op_margin = None
+
+    if q_is is not None and not q_is.empty:
+        rev_row = _find_row(q_is.index, REV_ALIASES, exclude=["per share", "operating revenue", "royalty"])
+        op_row = _find_row(q_is.index, OP_ALIASES)
+
+        if rev_row:
+            rev_ttm = ttm_sum(q_is, rev_row, 4)
+            rev_yoy = ttm_yoy_growth(q_is, rev_row)
+
+            if rev_yoy is None and a_is is not None and not a_is.empty and rev_row in a_is.index:
+                rev_yoy = annual_yoy_growth(a_is, rev_row)
+
+        if op_row and rev_ttm and rev_ttm > 0:
+            op_ttm = ttm_sum(q_is, op_row, 4)
+            if op_ttm:
+                op_margin = op_ttm / rev_ttm
+
+    return rev_yoy, op_margin
+
+
+def _calculate_ev_ebitda(info, q_is):
+    """EV/EBITDA 계산"""
+    ev = info.get("enterpriseValue")
+    ebitda = info.get("ebitda")
+    ev_ebitda = None
+
+    try:
+        if ev and ebitda and float(ebitda) > 0:
+            ev_ebitda = float(ev) / float(ebitda)
+    except (TypeError, ValueError):
+        pass
+
+    return ev_ebitda
+
+
+def _calculate_fcf_yield(info, cf_q):
+    """FCF Yield 계산"""
+    fcf_yield = None
+    if cf_q is not None and not cf_q.empty:
+        fcf_row = _find_row(cf_q.index, FCF_ALIASES)
+        if fcf_row:
+            fcf_ttm = ttm_sum(cf_q, fcf_row, 4)
+            mktcap = info.get("marketCap")
+            if fcf_ttm and mktcap and float(mktcap) > 0:
+                fcf_yield = float(fcf_ttm) / float(mktcap)
+
+    return fcf_yield
+
+
+def _calculate_growth_indicators(q_is, a_is, info):
+    """성장성 지표 계산"""
+    growth = {
+        "EPS_Growth_3Y": None,
+        "Revenue_Growth_3Y": None,
+        "EBITDA_Growth_3Y": None,
+    }
+
+    try:
+        # EPS 성장률
+        eps_series = []
+        if a_is is not None and not a_is.empty:
+            eps_row = _find_row(a_is.index, EPS_ALIASES)
+            if eps_row:
+                eps_data = pd.to_numeric(a_is.loc[eps_row], errors="coerce").dropna()
+                if len(eps_data) >= 3:
+                    eps_series = list(eps_data.sort_index().values[-3:])
+
+        if len(eps_series) >= 3:
+            growth["EPS_Growth_3Y"] = (eps_series[-1] / eps_series[0]) ** (1 / 2) - 1  # 2년간 CAGR
+
+        # 매출 성장률
+        if a_is is not None and not a_is.empty:
+            rev_row = _find_row(a_is.index, REV_ALIASES)
+            if rev_row:
+                rev_data = pd.to_numeric(a_is.loc[rev_row], errors="coerce").dropna()
+                if len(rev_data) >= 3:
+                    rev_series = list(rev_data.sort_index().values[-3:])
+                    if len(rev_series) >= 3:
+                        growth["Revenue_Growth_3Y"] = (rev_series[-1] / rev_series[0]) ** (1 / 2) - 1
+
+    except Exception as e:
+        print(f"성장성 지표 계산 중 에러: {e}")
+
+    return growth
+
+
+def build_enhanced_details_cache():
+    """개선된 캐시 빌드 함수"""
     source = CONFIG["UNIVERSE_SOURCE"]
     tickers = load_universe()
 
-    # OHLCV 라이트 지표 수집
+    # OHLCV 라이트 지표 수집 (개선된 TA 함수 사용)
     TA, PX, VOL, ok = preload_ohlcv_light(
         tickers,
         period=CONFIG["PRELOAD_PERIOD"],
-        chunk=CONFIG["PRELOAD_CHUNK"],
-        batch_retries=CONFIG["BATCH_RETRIES"],
-        single_retries=CONFIG["SINGLE_RETRIES"],
-        workers=CONFIG["FALLBACK_MAX_WORKERS"],
-        threads=CONFIG["YF_THREADS"],
-        sleep=CONFIG["SLEEP_SEC"]
+        chunk=CONFIG["PRELOAD_CHUNK"]
     )
 
     if not ok:
-        raise RuntimeError("OHLCV 라이트 프리로드 실패(빈 결과)")
+        raise RuntimeError("OHLCV 라이트 프리로드 실패")
 
-    # 라이트 표 생성
+    # 라이트 표 생성 (신규 지표 포함)
     lite_rows = []
     for t in tickers:
         tta = TA.get(t, {})
@@ -1060,17 +1309,31 @@ def build_details_cache():
         avg20 = VOL.get(t)
         if price is None or avg20 is None:
             continue
+
         dollar_vol = price * avg20
         row = {
             "Ticker": t,
             "Price": round(price, 2),
             "DollarVol($M)": round(dollar_vol / 1_000_000, 2),
+            # 기본 기술적 지표
             "SMA20": tta.get("sma20"),
             "SMA50": tta.get("sma50"),
+            "SMA200": tta.get("sma200"),
             "ATR_PCT": tta.get("atr_pct"),
             "RVOL": tta.get("rvol"),
             "RET5": tta.get("ret5"),
             "RET20": tta.get("ret20"),
+            "RET63": tta.get("ret63"),
+            # 신규 기술적 지표
+            "RSI_14": tta.get("rsi_14"),
+            "MACD": tta.get("macd"),
+            "MACD_Signal": tta.get("macd_signal"),
+            "MACD_Histogram": tta.get("macd_histogram"),
+            "BB_Position": tta.get("bb_position"),
+            "High_52W_Ratio": tta.get("high_52w_ratio"),
+            "Low_52W_Ratio": tta.get("low_52w_ratio"),
+            "Momentum_12M": tta.get("momentum_12m"),
+            "Volatility_21D": tta.get("volatility_21d"),
         }
         lite_rows.append(row)
 
@@ -1089,13 +1352,13 @@ def build_details_cache():
     cand = passed_tickers.sort_values("DollarVol($M)", ascending=False).head(CONFIG["DETAILED_TOP_K"])
     print(f"상세 데이터 수집 대상: {len(cand)}개")
 
-    # 상세 재무 수집
+    # 개선된 상세 재무 수집
     detail_rows = []
     success_count = 0
 
     for i, (t, row) in enumerate(cand.set_index("Ticker").iterrows(), start=1):
         try:
-            rec = fetch_details_for_ticker(
+            rec = fetch_enhanced_details_for_ticker(
                 t,
                 price=row["Price"],
                 avg_vol=(row["DollarVol($M)"] * 1_000_000) / max(1e-9, row["Price"])
@@ -1105,10 +1368,21 @@ def build_details_cache():
             rec.update({
                 "SMA20": row.get("SMA20"),
                 "SMA50": row.get("SMA50"),
+                "SMA200": row.get("SMA200"),
                 "ATR_PCT": row.get("ATR_PCT"),
                 "RVOL": row.get("RVOL"),
                 "RET5": row.get("RET5"),
                 "RET20": row.get("RET20"),
+                "RET63": row.get("RET63"),
+                "RSI_14": row.get("RSI_14"),
+                "MACD": row.get("MACD"),
+                "MACD_Signal": row.get("MACD_Signal"),
+                "MACD_Histogram": row.get("MACD_Histogram"),
+                "BB_Position": row.get("BB_Position"),
+                "High_52W_Ratio": row.get("High_52W_Ratio"),
+                "Low_52W_Ratio": row.get("Low_52W_Ratio"),
+                "Momentum_12M": row.get("Momentum_12M"),
+                "Volatility_21D": row.get("Volatility_21D"),
             })
             detail_rows.append(rec)
             success_count += 1
@@ -1124,19 +1398,11 @@ def build_details_cache():
 
     print(f"[상세데이터] 최종 수집: {success_count}/{len(cand)} 종목")
 
-    # 🔥 수정된 부분: _x, _y 접미사 문제 해결
+    # 데이터 병합
     details_df = pd.DataFrame(detail_rows)
-
-    # 방법 1: merge 대신 직접 매핑 (권장)
-    print("데이터 병합 중...")
-
-    # 라이트 데이터프레임 준비
-    base_df = passed_tickers.drop(columns=["_pass_light_generic"]).copy()
-
-    # 상세 데이터를 딕셔너리로 변환 (빠른 조회용)
     details_dict = details_df.set_index('Ticker').to_dict('index')
 
-    # 각 컬럼에 대해 상세 데이터 매핑
+    base_df = passed_tickers.drop(columns=["_pass_light_generic"]).copy()
     detail_columns = [col for col in details_df.columns if col not in ['Ticker']]
 
     for col in detail_columns:
@@ -1145,17 +1411,23 @@ def build_details_cache():
         )
 
     out = base_df
-    print(f"최종 CSV 행 수: {len(out)} (라이트 필터 통과: {len(passed_tickers)})")
+    print(f"최종 CSV 행 수: {len(out)}")
+
     # 데이터 타입 정리
-    for c in ["RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)", "FCF_Yield", "DivYield"]:
-        if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors='coerce')
+    numeric_columns = ["RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)",
+                       "FCF_Yield", "DivYield", "EPS_Growth_3Y", "Revenue_Growth_3Y",
+                       "RSI_14", "MACD", "MACD_Signal", "MACD_Histogram", "BB_Position",
+                       "High_52W_Ratio", "Low_52W_Ratio", "Momentum_12M", "Volatility_21D"]
+
+    for col in numeric_columns:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors='coerce')
 
     out["CreatedAtUTC"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     out["Source"] = source
 
     # 저장
-    base = CONFIG["OUT_BASENAME"].strip() or f"details_cache_{source}"
+    base = CONFIG["OUT_BASENAME"].strip() or f"enhanced_details_cache_{source}"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = f"{base}_{ts}.csv"
     out.to_csv(csv_path, index=False)
@@ -1178,4 +1450,4 @@ def pass_light_generic(price, dollar_vol):
 
 
 if __name__ == "__main__":
-    build_details_cache()
+    build_enhanced_details_cache()

@@ -16,10 +16,9 @@ screener_from_details_cache.py
 import os, math, time, random, warnings, openpyxl
 import pandas as pd, numpy as np
 from datetime import datetime
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side, NamedStyle
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.styles.numbers import FORMAT_PERCENTAGE_00, FORMAT_NUMBER_00, FORMAT_NUMBER_COMMA_SEPARATED1
-from openpyxl.formatting.rule import ColorScaleRule, CellIsRule, FormulaRule
+from openpyxl.formatting.rule import ColorScaleRule, CellIsRule
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
@@ -152,26 +151,102 @@ def apply_number_formatting(worksheet, df, start_row=2):
     except Exception as e:
         print(f"   ⚠️ 숫자 포맷팅 적용 중 오류: {e}")
 
-
 def apply_enhanced_conditional_formatting(worksheet, df, sheet_name, start_row=2):
-    """
-    향상된 조건부 서식 적용 (색상으로 가독성 향상)
-    """
+    """새로운 기술적 지표들에 대한 조건부 서식 추가"""
     try:
-        # 컬럼 인덱스 찾기
         col_mapping = {col: idx + 1 for idx, col in enumerate(df.columns)}
 
-        # 프로파일별 조건부 서식 적용
-        if any(profile in sheet_name.lower() for profile in ['buffett', 'modern']):
-            apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row)
-        elif any(profile in sheet_name.lower() for profile in ['swing', 'daytrade']):
-            apply_trading_conditional_formatting(worksheet, df, col_mapping, start_row)
+        # RSI_14 조건부 서식
+        if 'RSI_14' in col_mapping:
+            col_letter = get_column_letter(col_mapping['RSI_14'])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
 
-        print(f"   ✅ {sheet_name} 조건부 서식 적용 완료")
+            # 초록색: 30-70 (이상적)
+            green_rule = CellIsRule(operator='between', formula=['30', '70'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 20-30 또는 70-80 (주의)
+            orange_rule1 = CellIsRule(operator='between', formula=['20', '30'],
+                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+            orange_rule2 = CellIsRule(operator='between', formula=['70', '80'],
+                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 20 미만 또는 80 초과 (위험)
+            red_rule1 = CellIsRule(operator='lessThan', formula=['20'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+            red_rule2 = CellIsRule(operator='greaterThan', formula=['80'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule1)
+            worksheet.conditional_formatting.add(range_str, orange_rule2)
+            worksheet.conditional_formatting.add(range_str, red_rule1)
+            worksheet.conditional_formatting.add(range_str, red_rule2)
+
+        # MACD_Histogram 조건부 서식
+        if 'MACD_Histogram' in col_mapping:
+            col_letter = get_column_letter(col_mapping['MACD_Histogram'])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 양수 (상승 모멘텀)
+            green_rule = CellIsRule(operator='greaterThan', formula=['0'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 빨간색: 음수 (하락 모멘텀)
+            red_rule = CellIsRule(operator='lessThan', formula=['0'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+        # BB_Position 조건부 서식
+        if 'BB_Position' in col_mapping:
+            col_letter = get_column_letter(col_mapping['BB_Position'])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.3-0.7 (이상적)
+            green_rule = CellIsRule(operator='between', formula=['0.3', '0.7'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.2-0.3 또는 0.7-0.8 (주의)
+            orange_rule1 = CellIsRule(operator='between', formula=['0.2', '0.3'],
+                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+            orange_rule2 = CellIsRule(operator='between', formula=['0.7', '0.8'],
+                                      font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.2 미만 또는 0.8 초과 (위험)
+            red_rule1 = CellIsRule(operator='lessThan', formula=['0.2'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+            red_rule2 = CellIsRule(operator='greaterThan', formula=['0.8'],
+                                   font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule1)
+            worksheet.conditional_formatting.add(range_str, orange_rule2)
+            worksheet.conditional_formatting.add(range_str, red_rule1)
+            worksheet.conditional_formatting.add(range_str, red_rule2)
+
+        # High_52W_Ratio 조건부 서식
+        if 'High_52W_Ratio' in col_mapping:
+            col_letter = get_column_letter(col_mapping['High_52W_Ratio'])
+            range_str = f"{col_letter}{start_row}:{col_letter}{len(df) + start_row - 1}"
+
+            # 초록색: 0.7-0.95 (이상적)
+            green_rule = CellIsRule(operator='between', formula=['0.7', '0.95'],
+                                    font=Font(color=ExcelStyles.GREEN, bold=True))
+            # 주황색: 0.5-0.7 (주의)
+            orange_rule = CellIsRule(operator='between', formula=['0.5', '0.7'],
+                                     font=Font(color=ExcelStyles.ORANGE, bold=True))
+            # 빨간색: 0.5 미만 (위험)
+            red_rule = CellIsRule(operator='lessThan', formula=['0.5'],
+                                  font=Font(color=ExcelStyles.RED, bold=True))
+
+            worksheet.conditional_formatting.add(range_str, green_rule)
+            worksheet.conditional_formatting.add(range_str, orange_rule)
+            worksheet.conditional_formatting.add(range_str, red_rule)
+
+        # 기존 조건부 서식도 적용
+        apply_conditional_formatting(worksheet, df, start_row)
+
+        print(f"   ✅ {sheet_name} 향상된 조건부 서식 적용 완료")
 
     except Exception as e:
-        print(f"   ⚠️ 조건부 서식 적용 중 오류: {e}")
-
+        print(f"   ⚠️ 향상된 조건부 서식 적용 중 오류: {e}")
 
 def apply_buffett_conditional_formatting(worksheet, df, col_mapping, start_row):
     """
@@ -1334,24 +1409,27 @@ DEFENSIVE_SECTORS = {"utilities", "consumer defensive", "healthcare", "consumer 
 # 통합 CONFIG 설정 (현대적 버핏 철학 반영 + 엄격한 기준)
 # 개선된 CONFIG 설정 (현실적인 미국 주식 기준)
 CONFIG = {
-    "DETAILS_CACHE_FILE": "details_cache_us_all.csv",  # 실제 파일명으로 변경
-    "RUN_PROFILES": ["buffett_lite", "buffett_strict", "modern_buffett", "swing", "daytrade"],
+    "DETAILS_CACHE_FILE": "details_cache_us_all.csv",  # 새로운 캐시 파일 사용
 
-    # 현실적인 기본 조건 (미국 시장 기준)
-    "MIN_MKTCAP": 500_000_000,      # 5억 달러 (중형주 포함)
-    "MIN_PRICE": 5.0,               # 5달러 이상 (너무 저가주 제외)
-    "MIN_DOLLAR_VOLUME": 5_000_000, # 500만 달러 (적정 유동성)
-    "HARD_PE_MAX": 25.0,            # PER 25배 이하 (성장주 포함)
-    "MIN_REV_TTM_YOY_HF": 0.02,     # 매출성장률 2% 이상 (더 현실적)
-    "MIN_OP_MARGIN_HF": 0.08,       # 영업이익률 8% 이상
-    "MAX_DEBT_EQUITY": 1.5,         # 부채비율 1.5 이하 (더 유연하게)
-    "MIN_ROE_HF": 0.10,             # ROE 10% 이상 (시장 평균 대비 우수)
+    # 버핏형 필터 (기술적 지표 반영)
+    "MIN_MKTCAP": 500_000_000,
+    "MIN_PRICE": 5.0,
+    "MIN_DOLLAR_VOLUME": 5_000_000,
+    "HARD_PE_MAX": 25.0,
+    "MIN_REV_TTM_YOY_HF": 0.02,
+    "MIN_OP_MARGIN_HF": 0.08,
+    "MAX_DEBT_EQUITY": 1.5,
+    "MIN_ROE_HF": 0.10,
 
-    # 데이터 부족으로 제외된 지표들
-    "HARD_PEG_MAX": 2.0,            # PEG 2.0 이하
-    "MAX_EV_EBITDA_HARD": 20.0,     # EV/EBITDA 20배 이하
-    "MIN_FCFY_HF": 0.03,            # FCF Yield 3% 이상
-    "MIN_DIV_YIELD": 0.01,          # 배당수익률 1% 이상 (옵션)
+    # 기술적 지표 필터 (버핏형에 추가)
+    "BUFFETT_TECHNICAL": {
+        "MAX_ATR_PCT": 0.08,  # 과도한 변동성 제한
+        "MIN_RSI_14": 30,  # 과매도 상태 회피
+        "MAX_RSI_14": 70,  # 과매수 상태 회피
+        "MIN_BB_POSITION": 0.2,  # 지나치게 낮은 밴드 위치 제한
+        "MAX_BB_POSITION": 0.8,  # 지나치게 높은 밴드 위치 제한
+        "MIN_52W_RATIO": 0.6,  # 52주 저가 대비 너무 낮은 주가 제한
+    },
 
     # 추가 필터 설정
     "OP_MARGIN_EXEMPT_SECTORS": FIN_SECTORS,
@@ -1360,7 +1438,7 @@ CONFIG = {
 
     # 현대적 버핏 필터 (현실적으로 조정)
     "MODERN_BUFFETT": {
-        "MIN_MKTCAP": 2_000_000_000,    # 20억 달러 (대형주)
+        "MIN_MKTCAP": 2_000_000_000,
         "MIN_PRICE": 10.0,
         "MIN_DOLLAR_VOLUME": 10_000_000,
         "MIN_OP_MARGIN_HF": 0.12,
@@ -1370,16 +1448,7 @@ CONFIG = {
         "HARD_PE_MAX": 22.0,
         "MIN_DISCOUNT_PCT": 10.0,
         "MAX_DISCOUNT_PCT": 40.0,
-        "MIN_MOAT_SCORE": 0.65,         # 해자 점수 완화
-        "OP_MARGIN_EXEMPT_SECTORS": FIN_SECTORS,
-        "PREFERRED_SECTORS": {
-            "technology", "consumer defensive", "financial services",
-            "healthcare", "industrials"
-        },
-        "W_GROWTH": 0.25,
-        "W_QUALITY": 0.40,
-        "W_VALUE": 0.30,
-        "W_CATALYST": 0.05
+        "MIN_MOAT_SCORE": 0.65,
     },
 
     # 계층적 접근: 시가총액별 차등 조건
@@ -1390,7 +1459,7 @@ CONFIG = {
             "MIN_OP_MARGIN": 0.10,
             "MAX_DEBT_EQUITY": 1.2
         },
-        "mid_cap": {    # 5억~100억 달러
+        "mid_cap": {  # 5억~100억 달러
             "MIN_MKTCAP": 500_000_000,
             "MIN_ROE": 0.15,
             "MIN_OP_MARGIN": 0.08,
@@ -1404,32 +1473,139 @@ CONFIG = {
         }
     },
 
-    # 트레이딩 필터 (현실적으로 조정)
+    # 트레이딩 필터 (새로운 기술적 지표 반영)
     "SWING_FILTERS": {
         "MIN_PRICE": 5.0,
-        "MIN_DOLLAR_VOLUME": 3_000_000,  # 완화
-        "MIN_RVOL": 1.1,                 # 완화
-        "ATR_PCT_RANGE": [0.015, 0.15],  # 범위 확대
-        "TREND_RULE": "close>sma20",     # 조건 완화
-        "MIN_RET20": -0.05               # 하락 제한 완화
+        "MIN_DOLLAR_VOLUME": 3_000_000,
+        "MIN_RVOL": 1.1,
+        "ATR_PCT_RANGE": [0.015, 0.15],
+        "RSI_RANGE": [30, 70],  # RSI 필터 추가
+        "MACD_CONDITION": "positive",  # MACD 양수 조건
+        "BB_CONDITION": "middle",  # 볼린저밴드 중간 위치 선호
+        "MIN_52W_RATIO": 0.7,  # 52주 저가 대비 70% 이상
     },
+
     "DAY_FILTERS": {
         "MIN_PRICE": 5.0,
         "MIN_DOLLAR_VOLUME": 10_000_000,
-        "MIN_RVOL": 1.5,                 # 완화
-        "ATR_PCT_RANGE": [0.025, 0.25],  # 범위 확대
-        "TREND_RULE": "any",
-        "MIN_RET5": 0.02                 # 완화
+        "MIN_RVOL": 1.5,
+        "ATR_PCT_RANGE": [0.025, 0.25],
+        "RSI_RANGE": [40, 80],  # 데이트레이딩은 더 넓은 RSI 범위
+        "MACD_CONDITION": "any",
+        "BB_CONDITION": "any",
+        "MIN_RET5": 0.02
     },
 
-    # 기본 점수 가중치 (성장성 비중 높임)
+    # 점수 가중치 개선 (기술적 지표 반영)
     "W_GROWTH": 0.20,
     "W_QUALITY": 0.35,
     "W_VALUE": 0.35,
     "W_CATALYST": 0.10,
 
-    "OUT_PREFIX": "ENHANCED_SCREENER",
+    # 트레이딩 점수 가중치 개선
+    "TRADING_WEIGHTS": {
+        "swing": {
+            "momentum": 0.30,  # 모멘텀 (기존 0.45에서 감소)
+            "trend": 0.25,  # 트렌드 (유지)
+            "liquidity": 0.20,  # 유동성 (유지)
+            "volatility": 0.10,  # 변동성 (유지)
+            "technical": 0.15  # 새로운 기술적 지표 가중치 추가
+        },
+        "daytrade": {
+            "momentum": 0.25,  # 모멘텀 (기존 0.30에서 감소)
+            "trend": 0.10,  # 트렌드 (유지)
+            "liquidity": 0.35,  # 유동성 (기존 0.40에서 감소)
+            "volatility": 0.15,  # 변동성 (기존 0.20에서 감소)
+            "technical": 0.15  # 새로운 기술적 지표 가중치 추가
+        }
+    },
+    "OUT_PREFIX": "TECH_ENHANCED_SCREENER"
 }
+
+
+def calculate_technical_score(row, profile_type="buffett"):
+    """
+    새로운 기술적 지표들을 활용한 종합 기술 점수 계산
+    """
+    tech_scores = []
+    weights = []
+
+    try:
+        # 1. RSI 점수 (30-70 범위가 이상적)
+        rsi = row.get('RSI_14')
+        if rsi and not pd.isna(rsi):
+            if 30 <= rsi <= 70:
+                rsi_score = 1.0 - abs(rsi - 50) / 20  # 50에 가까울수록 높은 점수
+            else:
+                rsi_score = 0.3  # 범위 밖이면 낮은 점수
+            tech_scores.append(rsi_score)
+            weights.append(0.25)
+
+        # 2. MACD 점수
+        macd_histogram = row.get('MACD_Histogram')
+        if macd_histogram and not pd.isna(macd_histogram):
+            # 히스토그램이 양수이면 상승 모멘텀
+            macd_score = 0.5 + (macd_histogram * 10)  # 정규화 필요
+            macd_score = max(0.1, min(1.0, macd_score))
+            tech_scores.append(macd_score)
+            weights.append(0.25)
+
+        # 3. 볼린저밴드 위치 점수
+        bb_position = row.get('BB_Position')
+        if bb_position and not pd.isna(bb_position):
+            # 0.3-0.7 범위가 이상적 (상단/하단 너무 치우치지 않음)
+            if 0.3 <= bb_position <= 0.7:
+                bb_score = 1.0 - abs(bb_position - 0.5) / 0.2
+            else:
+                bb_score = 0.4
+            tech_scores.append(bb_score)
+            weights.append(0.20)
+
+        # 4. 52주 고가 대비 위치 점수
+        high_52w_ratio = row.get('High_52W_Ratio')
+        if high_52w_ratio and not pd.isna(high_52w_ratio):
+            # 0.7-0.95 범위가 이상적 (너무 고점에 있지 않으면서도 강세)
+            if 0.7 <= high_52w_ratio <= 0.95:
+                high_52w_score = 1.0
+            elif high_52w_ratio > 0.95:
+                high_52w_score = 0.8 - (high_52w_ratio - 0.95) * 4  # 고점일수록 점수 감소
+            else:
+                high_52w_score = high_52w_ratio  # 낮을수록 점수 낮음
+            tech_scores.append(max(0.1, high_52w_score))
+            weights.append(0.15)
+
+        # 5. 모멘텀 점수 (12개월)
+        momentum_12m = row.get('Momentum_12M')
+        if momentum_12m and not pd.isna(momentum_12m):
+            # 양의 모멘텀 선호, but 너무 높은 모멘텀은 주의
+            if 0 <= momentum_12m <= 0.5:
+                momentum_score = 0.5 + momentum_12m
+            elif momentum_12m > 0.5:
+                momentum_score = 1.0 - (momentum_12m - 0.5) * 0.5
+            else:
+                momentum_score = 0.3  # 음의 모멘텀
+            tech_scores.append(max(0.1, momentum_score))
+            weights.append(0.15)
+
+    except Exception as e:
+        print(f"기술 점수 계산 중 오류: {e}")
+
+    # 가중평균 계산
+    if tech_scores and weights:
+        technical_score = np.average(tech_scores, weights=weights)
+    else:
+        technical_score = 0.5  # 기본값
+
+    # 프로파일별 조정
+    if profile_type == "buffett":
+        # 버핏형: 기술적 지표 비중 낮춤
+        technical_score = 0.3 + technical_score * 0.4
+    elif profile_type == "trading":
+        # 트레이딩: 기술적 지표 비중 높임
+        technical_score = technical_score
+
+    return min(1.0, max(0.1, technical_score))
+
 
 def get_market_cap_tier(mktcap):
     """시가총액에 따른 티어 반환"""
@@ -1442,29 +1618,72 @@ def get_market_cap_tier(mktcap):
 
 # 현대적 버핏 필터링 함수들
 def enhanced_buffett_modern_filter(row, cfg):
-    """워렌 버핏 최근 철학 반영 필터"""
+    """기술적 지표를 고려한 현대적 버핏 필터"""
     modern_cfg = cfg["MODERN_BUFFETT"]
     combined_cfg = {**cfg, **modern_cfg}
 
     if not enhanced_pass_buffett_base(row, combined_cfg):
         return False
 
-    # 현대적 버핏 추가 기준
-    if not has_economic_moat(row, modern_cfg):
-        return False
+    # 기술적 지표 필터 적용
+    rsi = row.get('RSI_14')
+    if rsi and not pd.isna(rsi):
+        rsi_range = modern_cfg.get("TECH_RSI_RANGE", [35, 65])
+        if not (rsi_range[0] <= rsi <= rsi_range[1]):
+            return False
 
-    if not has_stable_cashflow(row, modern_cfg):
-        return False
-
-    if not passes_modern_financial_health(row, modern_cfg):
+    # 추세 강도 확인
+    trend_strength = calculate_trend_strength(row)
+    min_trend = modern_cfg.get("TECH_TREND_STRENGTH", 0.6)
+    if trend_strength < min_trend:
         return False
 
     return True
 
 
+def calculate_trend_strength(row):
+    """추세 강도 계산 (다양한 기술적 지표 활용)"""
+    strength_components = []
+
+    # 1. 이동평균 정렬 여부
+    price = row.get('Price')
+    sma20 = row.get('SMA20')
+    sma50 = row.get('SMA50')
+
+    if all(x is not None and not pd.isna(x) for x in [price, sma20, sma50]):
+        if price > sma20 > sma50:
+            strength_components.append(1.0)
+        elif price > sma20:
+            strength_components.append(0.7)
+        else:
+            strength_components.append(0.3)
+
+    # 2. MACD 추세
+    macd = row.get('MACD')
+    macd_signal = row.get('MACD_Signal')
+    if all(x is not None and not pd.isna(x) for x in [macd, macd_signal]):
+        if macd > macd_signal:
+            strength_components.append(0.8)
+        else:
+            strength_components.append(0.4)
+
+    # 3. 볼린저밴드 추세
+    bb_position = row.get('BB_Position')
+    if bb_position and not pd.isna(bb_position):
+        if 0.4 <= bb_position <= 0.6:
+            strength_components.append(0.9)  # 중간 위치 - 강한 추세
+        else:
+            strength_components.append(0.6)
+
+    if strength_components:
+        return np.mean(strength_components)
+    else:
+        return 0.5
+
 def enhanced_pass_buffett_base(row, cfg=CONFIG, debug=False):
-    """개선된 버핏 스타일 필터링 (계층적 접근)"""
-    # 기본 유동성 필터
+    """기술적 지표를 고려한 개선된 버핏 베이스 필터"""
+
+    # 기존 기본 필터 적용
     price = row.get("Price")
     dv = (row.get("DollarVol($M)") or 0) * 1_000_000
     if pd.isna(price) or pd.isna(dv):
@@ -1475,11 +1694,44 @@ def enhanced_pass_buffett_base(row, cfg=CONFIG, debug=False):
         if debug: print(f"  ❌ 최소가격/거래량 필터: price={price}, dv={dv}")
         return False
 
-    # 시가총액 필터 및 티어 결정
+    # 시가총액 필터
     mktcap = (row.get("MktCap($B)") or 0) * 1_000_000_000
     min_mktcap = cfg.get("MIN_MKTCAP", 500_000_000)
     if mktcap and mktcap < min_mktcap:
         if debug: print(f"  ❌ 시가총액 필터: mktcap={mktcap}, min={min_mktcap}")
+        return False
+
+    # 기술적 지표 필터 적용
+    tech_cfg = cfg.get("BUFFETT_TECHNICAL", {})
+
+    # ATR 변동성 필터
+    atr_pct = row.get("ATR_PCT")
+    max_atr = tech_cfg.get("MAX_ATR_PCT", 0.08)
+    if atr_pct and atr_pct > max_atr:
+        if debug: print(f"  ❌ 변동성 필터: atr_pct={atr_pct}, max={max_atr}")
+        return False
+
+    # RSI 필터
+    rsi = row.get("RSI_14")
+    min_rsi = tech_cfg.get("MIN_RSI_14", 30)
+    max_rsi = tech_cfg.get("MAX_RSI_14", 70)
+    if rsi and (rsi < min_rsi or rsi > max_rsi):
+        if debug: print(f"  ❌ RSI 필터: rsi={rsi}, range=[{min_rsi}, {max_rsi}]")
+        return False
+
+    # 볼린저밴드 위치 필터
+    bb_position = row.get("BB_Position")
+    min_bb = tech_cfg.get("MIN_BB_POSITION", 0.2)
+    max_bb = tech_cfg.get("MAX_BB_POSITION", 0.8)
+    if bb_position and (bb_position < min_bb or bb_position > max_bb):
+        if debug: print(f"  ❌ 볼린저밴드 필터: bb_position={bb_position}, range=[{min_bb}, {max_bb}]")
+        return False
+
+    # 52주 고가 비율 필터
+    high_52w_ratio = row.get("High_52W_Ratio")
+    min_52w = tech_cfg.get("MIN_52W_RATIO", 0.6)
+    if high_52w_ratio and high_52w_ratio < min_52w:
+        if debug: print(f"  ❌ 52주 고가 비율 필터: high_52w_ratio={high_52w_ratio}, min={min_52w}")
         return False
 
     # 계층적 조건 적용
@@ -2245,10 +2497,11 @@ def enhanced_valuation_screener_with_formatting():
     """
     # 데이터 로드 및 처리
     df = load_cache(CONFIG["DETAILS_CACHE_FILE"])
+    # 전체 데이터에 대해 Winsorization 적용
+    df = apply_winsorization_to_whole_dataset(df)
     print("Calculating enhanced fair values with sector awareness...")
     fair_values_df = calculate_enhanced_fair_value(df)
     df = pd.concat([df, fair_values_df], axis=1)
-
     results = {}
 
     # ROE_5Y_Avg 데이터 품질 확인
@@ -2439,6 +2692,48 @@ def check_data_quality_before_screening(df):
         print(f"\n⚠️ 주의: 데이터가 부족한 컬럼들: {low_quality_cols}")
 
 
+def apply_winsorization_to_whole_dataset(df):
+    """
+    전체 데이터셋에 대해 Winsorization 적용 (일관성 보장)
+    """
+    df_processed = df.copy()
+
+    # Winsorization 적용할 컬럼들
+    winsorize_columns = [
+        "RevYoY", "OpMarginTTM", "OperatingMargins(info)", "ROE(info)", "ROE_5Y_Avg",
+        "FCF_Yield", "EV_EBITDA", "PE", "PEG", "PB", "DivYield", "Debt_to_Equity",
+        "DollarVol($M)", "RVOL", "ATR_PCT", "RET5", "RET20"
+    ]
+
+    for col in winsorize_columns:
+        if col in df_processed.columns and df_processed[col].notna().sum() > 0:
+            df_processed[col] = _winsor_series(df_processed[col].astype(float), p=0.02)
+
+    return df_processed
+
+def enhanced_build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
+    """기술적 지표를 반영한 개선된 버핏 점수 계산"""
+    temp = df.copy()
+
+    # 기존 점수 계산
+    temp = build_scores_buffett(temp, cfg)
+
+    # 기술적 지표 점수 추가
+    tech_scores = []
+    for idx, row in temp.iterrows():
+        tech_score = calculate_technical_score(row, "buffett")
+        tech_scores.append(tech_score)
+
+    temp["TechnicalScore"] = pd.Series(tech_scores, index=temp.index)
+
+    # 종합 점수에 기술적 지표 반영 (10% 가중치)
+    temp["TotalScore_Enhanced"] = (
+            temp["TotalScore"] * 0.9 +
+            temp["TechnicalScore"] * 100 * 0.1
+    )
+
+    return temp
+
 def build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
     """개선된 버핏 스타일 점수 계산 (데이터 누락 대응)"""
     temp = df.copy()
@@ -2461,17 +2756,6 @@ def build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
 
     # 데이터 전처리
     temp["_OpMarginUse"] = temp[["OpMarginTTM", "OperatingMargins(info)"]].max(axis=1, numeric_only=True)
-
-    # Winsorize로 이상치 처리 (데이터 있는 경우만)
-    for col in ["RevYoY", "_OpMarginUse", "ROE(info)", "ROE_5Y_Avg", "FCF_Yield",
-                "EV_EBITDA", "PE", "PEG", "PB", "DivYield", "Debt_to_Equity"]:
-        if col in temp.columns and temp[col].notna().sum() > 0:
-            temp[col] = _winsor_series(temp[col].astype(float), p=0.02)
-        elif col in temp.columns:
-            temp[col] = np.nan
-
-    # 섹터 정보 준비
-    sectors = temp["Sector"].fillna("").str.lower()
 
     growth_s = [];
     qual_s = [];
@@ -2583,6 +2867,118 @@ def build_scores_buffett(df: pd.DataFrame, cfg=CONFIG):
 
     return temp
 
+
+def enhanced_build_scores_trading(df: pd.DataFrame, profile, cfg=CONFIG):
+    """새로운 기술적 지표를 반영한 개선된 트레이딩 점수 계산"""
+    temp = df.copy()
+
+    # 데이터 전처리
+    for col in ["RET5", "RET20", "RSI_14", "MACD", "MACD_Histogram", "BB_Position"]:
+        if col in temp.columns:
+            temp[col] = temp[col].astype(float).fillna(0)
+
+    # 1. 모멘텀 점수 (기존 + 새로운 지표)
+    momentum_components = []
+
+    # 기존 모멘텀 지표
+    if "RET5" in temp.columns and "RET20" in temp.columns:
+        ret5_rank = temp["RET5"].rank(pct=True)
+        ret20_rank = temp["RET20"].rank(pct=True)
+        momentum_components.extend([ret5_rank, ret20_rank])
+
+    # 새로운 기술적 모멘텀 지표
+    if "MACD_Histogram" in temp.columns:
+        macd_momentum = temp["MACD_Histogram"].rank(pct=True)
+        momentum_components.append(macd_momentum)
+
+    if "RSI_14" in temp.columns:
+        # RSI가 50-70 사이면 모멘텀 좋음
+        rsi_momentum = temp["RSI_14"].apply(lambda x: max(0, (x - 30) / 40) if 30 <= x <= 70 else 0.3)
+        momentum_components.append(rsi_momentum)
+
+    temp["MomentumScore"] = np.mean(momentum_components, axis=0) if momentum_components else 0.5
+
+    # 2. 트렌드 점수 (개선)
+    trend_components = []
+
+    # 이동평균 트렌드
+    close = temp["Price"]
+    s20 = temp["SMA20"]
+    s50 = temp["SMA50"]
+
+    trend = []
+    for i in temp.index:
+        c, sma20, sma50 = close[i], s20[i], s50[i]
+        score = 0.5
+        try:
+            if all(x is not None and not pd.isna(x) for x in [c, sma20, sma50]):
+                if c > sma20 > sma50:
+                    score = 1.0
+                elif c > sma20:
+                    score = 0.75
+                elif sma20 and sma50 and sma20 > sma50:
+                    score = 0.65
+                else:
+                    score = 0.25
+        except Exception:
+            score = 0.5
+        trend.append(score)
+
+    trend_components.append(pd.Series(trend, index=temp.index))
+
+    # MACD 트렌드
+    if "MACD" in temp.columns and "MACD_Signal" in temp.columns:
+        macd_trend = (temp["MACD"] > temp["MACD_Signal"]).astype(float)
+        trend_components.append(macd_trend)
+
+    # 볼린저밴드 트렌드
+    if "BB_Position" in temp.columns:
+        bb_trend = temp["BB_Position"].apply(lambda x: max(0, min(1, x)))
+        trend_components.append(bb_trend)
+
+    temp["TrendScore"] = np.mean(trend_components, axis=0) if trend_components else 0.5
+
+    # 3. 유동성 점수 (기존과 동일)
+    dl = temp["DollarVol($M)"].rank(pct=True) if "DollarVol($M)" in temp.columns else pd.Series(0.5, index=temp.index)
+    rv = temp["RVOL"].fillna(1.0).rank(pct=True) if "RVOL" in temp.columns else pd.Series(0.5, index=temp.index)
+    temp["LiquidityScore"] = np.mean([dl, rv], axis=0)
+
+    # 4. 변동성 점수 (개선)
+    flt = cfg["SWING_FILTERS"] if profile == "swing" else cfg["DAY_FILTERS"]
+    lo, hi = flt["ATR_PCT_RANGE"]
+    target = (lo + hi) / 2.0
+    sigma = (hi - lo) / 2.0
+
+    vols = []
+    for v in temp["ATR_PCT"].fillna(target):
+        try:
+            s = math.exp(-((float(v) - target) ** 2) / (2 * (sigma ** 2)))
+        except Exception:
+            s = 0.5
+        vols.append(s)
+
+    temp["VolatilityScore"] = pd.Series([max(0, min(1, x)) for x in vols], index=temp.index)
+
+    # 5. 기술적 지표 종합 점수 (신규)
+    tech_scores = []
+    for idx, row in temp.iterrows():
+        tech_score = calculate_technical_score(row, "trading")
+        tech_scores.append(tech_score)
+
+    temp["TechnicalScore"] = pd.Series(tech_scores, index=temp.index)
+
+    # 종합 점수 계산 (새로운 가중치 적용)
+    weights = cfg["TRADING_WEIGHTS"][profile]
+    temp["TotalScore"] = 100 * (
+            weights["momentum"] * temp["MomentumScore"] +
+            weights["trend"] * temp["TrendScore"] +
+            weights["liquidity"] * temp["LiquidityScore"] +
+            weights["volatility"] * temp["VolatilityScore"] +
+            weights["technical"] * temp["TechnicalScore"]
+    )
+
+    return temp
+
 def build_scores_trading(df: pd.DataFrame, profile, cfg=CONFIG):
     temp=df.copy()
     for col in ["RET5","RET20"]:
@@ -2640,6 +3036,190 @@ def load_cache(path):
         if c in df.columns: df[c]=pd.to_numeric(df[c], errors="coerce")
     return df
 
+def enhanced_technical_screener():
+    """
+    기술적 지표가 강화된 통합 스크리너
+    """
+    df = load_cache(CONFIG["DETAILS_CACHE_FILE"])
+    df = apply_winsorization_to_whole_dataset(df)
+
+    print("🔍 기술적 지표 기반 스크리닝 시작...")
+
+    # 적정가 계산
+    fair_values_df = calculate_enhanced_fair_value(df)
+    df = pd.concat([df, fair_values_df], axis=1)
+
+    results = {}
+
+    # 1. 기술적 지표 반영 버핏-Lite
+    mask_lite = df.apply(lambda r: enhanced_pass_buffett_base(r, CONFIG), axis=1)
+    raw_lite = df[mask_lite].copy()
+    if not raw_lite.empty:
+        scored_lite = enhanced_build_scores_buffett(raw_lite, CONFIG)
+        scored_lite = scored_lite[scored_lite['TotalScore_Enhanced'] >= 60]
+        results["buffett_lite_tech"] = scored_lite.sort_values("TotalScore_Enhanced", ascending=False)
+
+    # 2. 기술적 지표 반영 버핏-Strict
+    strict_cfg = CONFIG.copy()
+    strict_cfg.update({
+        "MIN_MKTCAP": 2_000_000_000,
+        "MIN_PRICE": 10.0,
+        "MIN_DOLLAR_VOLUME": 10_000_000,
+        "MIN_DISCOUNT_PCT": 12.0,
+        "MIN_OP_MARGIN_HF": 0.12,
+        "MIN_REV_TTM_YOY_HF": 0.06,
+        "HARD_PE_MAX": 20.0,
+        "MIN_ROE_HF": 0.15,
+        "MAX_DEBT_EQUITY": 1.0,
+    })
+    mask_strict = df.apply(lambda r: enhanced_pass_buffett_base(r, strict_cfg), axis=1)
+    raw_strict = df[mask_strict].copy()
+    if not raw_strict.empty:
+        scored_strict = enhanced_build_scores_buffett(raw_strict, strict_cfg)
+        scored_strict = scored_strict[scored_strict['TotalScore_Enhanced'] >= 70]
+        results["buffett_strict_tech"] = scored_strict.sort_values("TotalScore_Enhanced", ascending=False)
+
+    # 3. 현대적 버핏 (기술적 지표 반영)
+    mask_modern = df.apply(lambda r: enhanced_buffett_modern_filter(r, CONFIG), axis=1)
+    raw_modern = df[mask_modern].copy()
+    if not raw_modern.empty:
+        scored_modern = build_modern_buffett_scores(raw_modern, CONFIG)
+
+        # 기술적 지표 점수 추가 반영
+        tech_scores = []
+        for idx, row in scored_modern.iterrows():
+            tech_score = calculate_technical_score(row, "buffett")
+            tech_scores.append(tech_score)
+
+        scored_modern["TechnicalScore"] = pd.Series(tech_scores, index=scored_modern.index)
+        scored_modern["TotalScore_Modern_Enhanced"] = (
+                scored_modern["TotalScore_Modern"] * 0.9 +
+                scored_modern["TechnicalScore"] * 100 * 0.1
+        )
+
+        scored_modern = scored_modern[scored_modern['TotalScore_Modern_Enhanced'] >= 70]
+        results["modern_buffett_tech"] = scored_modern.sort_values("TotalScore_Modern_Enhanced", ascending=False)
+
+    # 4. 기술적 지표 강화 트레이딩 프로파일
+    for prof in ("swing", "daytrade"):
+        mask_tr = df.apply(lambda r: enhanced_pass_trading(r, prof, CONFIG), axis=1)
+        base = df[mask_tr].copy()
+        if not base.empty:
+            scored = enhanced_build_scores_trading(base, prof, CONFIG)
+
+            # 트레이딩 출력 컬럼 (새로운 기술적 지표 포함)
+            trading_cols = [
+                "Ticker", "Name", "Sector", "Price", "DollarVol($M)", "RVOL",
+                "ATR_PCT", "SMA20", "SMA50", "RET5", "RET20",
+                "RSI_14", "MACD", "MACD_Histogram", "BB_Position", "High_52W_Ratio",
+                "MomentumScore", "TrendScore", "LiquidityScore", "VolatilityScore",
+                "TechnicalScore", "TotalScore"
+            ]
+            trading_cols = [c for c in trading_cols if c in scored.columns]
+            results[f"{prof}_tech"] = scored[trading_cols].sort_values("TotalScore", ascending=False)
+
+    # 결과 출력
+    print("\n=== 기술적 지표 기반 스크리닝 결과 ===")
+    for profile_name, result_df in results.items():
+        print(f"   {profile_name}: {len(result_df)}개 종목")
+
+    # 엑셀 저장
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_name = f"기술적지표_강화_스크리너_{ts}.xlsx"
+
+    with pd.ExcelWriter(out_name, engine='openpyxl') as writer:
+        for profile_name, result_df in results.items():
+            if not result_df.empty:
+                result_df.to_excel(writer, sheet_name=profile_name[:31], index=False)
+
+                # 향상된 조건부 서식 적용
+                apply_enhanced_conditional_formatting(writer.sheets[profile_name[:31]],
+                                                      result_df, profile_name)
+
+        print(f"\n💾 결과 저장: {out_name}")
+
+    return results
+
+def enhanced_pass_trading(row, profile, cfg=CONFIG):
+    """기술적 지표를 고려한 개선된 트레이딩 필터"""
+    f = cfg["SWING_FILTERS"] if profile == "swing" else cfg["DAY_FILTERS"]
+
+    # 기본 필터
+    price = row.get("Price")
+    dv = (row.get("DollarVol($M)") or 0) * 1_000_000
+    rvol = row.get("RVOL")
+    atr = row.get("ATR_PCT")
+
+    if price is None or dv is None:
+        return False
+    if price < f["MIN_PRICE"] or dv < f["MIN_DOLLAR_VOLUME"]:
+        return False
+    if (rvol is None) or (rvol < f["MIN_RVOL"]):
+        return False
+
+    lo, hi = f["ATR_PCT_RANGE"]
+    if (atr is None) or (atr < lo) or (atr > hi):
+        return False
+
+    # 기술적 지표 필터
+    rsi = row.get("RSI_14")
+    if rsi is not None:
+        rsi_range = f.get("RSI_RANGE", [30, 70])
+        if not (rsi_range[0] <= rsi <= rsi_range[1]):
+            return False
+
+    # MACD 조건
+    macd_condition = f.get("MACD_CONDITION", "any")
+    if macd_condition != "any":
+        macd_histogram = row.get("MACD_Histogram")
+        if macd_histogram is not None:
+            if macd_condition == "positive" and macd_histogram <= 0:
+                return False
+            elif macd_condition == "negative" and macd_histogram >= 0:
+                return False
+
+    # 볼린저밴드 조건
+    bb_condition = f.get("BB_CONDITION", "any")
+    if bb_condition != "any":
+        bb_position = row.get("BB_Position")
+        if bb_position is not None:
+            if bb_condition == "middle" and not (0.3 <= bb_position <= 0.7):
+                return False
+            elif bb_condition == "upper" and bb_position < 0.5:
+                return False
+            elif bb_condition == "lower" and bb_position > 0.5:
+                return False
+
+    # 52주 고가 비율
+    min_52w_ratio = f.get("MIN_52W_RATIO", 0.7)
+    high_52w_ratio = row.get("High_52W_Ratio")
+    if high_52w_ratio is not None and high_52w_ratio < min_52w_ratio:
+        return False
+
+    # 기존 트렌드 필터
+    rule = f.get("TREND_RULE", "any").lower()
+    sma20 = row.get("SMA20")
+    sma50 = row.get("SMA50")
+
+    if rule == "close>sma20>sma50":
+        if not (price and sma20 and sma50 and (price > sma20 > sma50)):
+            return False
+    elif rule == "sma20>50":
+        if not (sma20 and sma50 and sma20 > sma50):
+            return False
+
+    if profile == "swing":
+        ret20 = row.get("RET20")
+        if ret20 is not None and ret20 < f["MIN_RET20"]:
+            return False
+
+    if profile == "daytrade":
+        ret5 = row.get("RET5")
+        if ret5 is not None and ret5 < f["MIN_RET5"]:
+            return False
+
+    return True
+
 def pass_trading(row, profile, cfg=CONFIG):
     f = cfg["SWING_FILTERS"] if profile=="swing" else cfg["DAY_FILTERS"]
     price=row.get("Price"); dv=(row.get("DollarVol($M)") or 0)*1_000_000
@@ -2664,11 +3244,11 @@ def pass_trading(row, profile, cfg=CONFIG):
     return True
 
 if __name__ == "__main__":
-    # 데이터 로드 및 품질 확인
-    df = load_cache(CONFIG["DETAILS_CACHE_FILE"])
-    check_data_quality_before_screening(df)
+    print("🚀 기술적 지표 강화 스크리너 실행 중...")
+    results = enhanced_technical_screener()
 
-    # 스타일링과 포맷팅이 적용된 개선된 통합 스크리너 실행
-    comprehensive_results = enhanced_valuation_screener_with_formatting()
-
-    print("\n✅ 개선된 스크리닝 완료! (스타일링 + 포맷팅 적용)")
+    print("\n🎯 완료! 주요 특징:")
+    print("   • RSI, MACD, 볼린저밴드 등 기술적 지표 반영")
+    print("   • 버핏형 투자에 기술적 타이밍 요소 추가")
+    print("   • 트레이딩 점수 계산에 다양한 기술적 지표 통합")
+    print("   • 새로운 조건부 서식으로 시각적 분석 강화")
