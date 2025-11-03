@@ -76,7 +76,7 @@ CONFIG = {
     "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
 
     "YF_THREADS": False,
-    "SLEEP_SEC": 0.1,  # 병렬 처리 시에는 짧게
+    "SLEEP_SEC": 0.25,  # 병렬 처리 시에는 짧게
 
     # 네트워크 설정
     "REQUEST_TIMEOUT": 60,
