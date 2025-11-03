@@ -14,9 +14,9 @@ build_details_cache_fully_optimized.py
 ✨ 데이터 수집 안정성 개선사항:
 1. 📊 OHLCV 데이터 수집 안정성 향상:
    - 부분 성공 케이스 처리: 배치에서 일부 실패 시 누락된 티커만 개별 다운로드
-   - 배치 크기 최적화: 50 → 30으로 축소하여 안정성 향상
-   - 최소 데이터 요구사항 완화: 50개 → 20개로 완화하여 더 많은 데이터 수집
-   - 개선된 재시도 로직: 배치 3회, 개별 4회 재시도
+   - 최소 데이터 요구사항 완화: 50개 → 20개로 완화하여 더 많은 종목 수집 가능
+   - 스마트 재시도 로직: 배치 완전 실패 시 전체 재시도, 부분 실패 시 누락분만 재시도
+   - 재시도 횟수: 배치 5회, 개별 3회
 
 2. 💼 상세 재무 데이터 수집 개선:
    - 재무제표 API 재시도 로직 추가 (각 API 호출당 최대 3회)
@@ -57,9 +57,9 @@ CONFIG = {
     "INCLUDE_EXCEL": True,
 
     "PRELOAD_PERIOD": "252d",  # 1년 데이터 (52주 계산용)
-    "PRELOAD_CHUNK": 30,  # 배치 크기 (50 -> 30으로 축소하여 안정성 향상)
-    "BATCH_RETRIES": 3,  # 재시도 횟수 줄이고 개별 다운로드로 빠르게 전환
-    "SINGLE_RETRIES": 4,  # 개별 재시도는 늘림
+    "PRELOAD_CHUNK": 50,  # 배치 크기 (원래대로 복원)
+    "BATCH_RETRIES": 5,  # 배치 재시도
+    "SINGLE_RETRIES": 3,  # 개별 재시도
 
     # ⭐ 병렬 처리 설정
     "OHLCV_WORKERS": 2,  # OHLCV 다운로드 병렬 스레드 수
@@ -540,7 +540,7 @@ def load_universe():
 def _compute_enhanced_ta_single(c, h, l, v):
     """개선된 기술적 지표 계산 + 이상치 검증"""
     try:
-        # 최소 데이터 요구사항 완화: 50개 -> 20개
+        # 최소 데이터 요구사항 완화: 50개 -> 20개 (더 많은 종목 수집 가능)
         if c is None or len(c.dropna()) < 20:
             return None
 
@@ -549,16 +549,9 @@ def _compute_enhanced_ta_single(c, h, l, v):
             return None
 
         last_close = float(c_clean.iloc[-1])
-        # 가격 검증 범위 확대
         last_close = validate_price(last_close)
         if last_close is None:
-            # 검증 실패 시에도 최소한의 데이터는 반환 시도
-            try:
-                last_close = float(c_clean.iloc[-1])
-                if last_close <= 0 or last_close > 1_000_000:  # 더 넓은 범위
-                    return None
-            except:
-                return None
+            return None
 
         # 기본 지표들
         s20 = c_clean.rolling(20).mean().iloc[-1] if len(c_clean) >= 20 else None
@@ -839,14 +832,22 @@ def process_ohlcv_batch(args):
                 except Exception:
                     pass
 
-    # 배치 실패 또는 부분 성공 시 누락된 티커만 개별 다운로드
-    failed_tickers = [t for t in batch if t not in ok_tickers_batch]
+    # 배치 완전 실패 시 전체 개별 다운로드, 부분 실패 시 누락된 것만 개별 다운로드
+    if processed_count == 0:
+        # 배치 전체 실패 - 모든 티커 개별 다운로드
+        retry_tickers = batch
+    elif processed_count < len(batch):
+        # 부분 성공 - 실패한 티커만 개별 다운로드
+        retry_tickers = [t for t in batch if t not in ok_tickers_batch]
+        if CONFIG.get("VERBOSE_LOGGING", False):
+            print(f"  [배치 {batch_idx}] 부분 성공: {processed_count}/{len(batch)}, 누락 {len(retry_tickers)}개 재시도")
+    else:
+        # 전체 성공
+        retry_tickers = []
 
-    if failed_tickers:
-        if CONFIG.get("VERBOSE_LOGGING", False) and processed_count > 0:
-            print(f"  [배치 {batch_idx}] 부분 성공: {processed_count}/{len(batch)}, 누락 {len(failed_tickers)}개 개별 다운로드 시도")
-
-        for t in failed_tickers:
+    # 개별 다운로드
+    if retry_tickers:
+        for t in retry_tickers:
             for attempt in range(CONFIG["SINGLE_RETRIES"]):
                 try:
                     data = safe_yf_download(
