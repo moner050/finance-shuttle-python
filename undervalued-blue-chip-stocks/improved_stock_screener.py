@@ -596,6 +596,156 @@ class StockScreener:
 class ExcelExporter:
     """엑셀 출력 관리"""
 
+    # 컬럼 설명 딕셔너리
+    COLUMN_DESCRIPTIONS = {
+        'Ticker': '티커 심볼',
+        'Name': '회사명',
+        'Sector': '섹터',
+        'Industry': '산업군',
+        'Price': '현재 주가',
+        'MktCap($B)': '시가총액 (10억 달러)',
+        'DollarVol($M)': '일평균 거래대금 (백만 달러)',
+
+        # 가치평가
+        'FairValue': '적정가치 (PE, PB, PEG, FCF 기반 계산)',
+        'Discount': '할인율 (적정가치 대비 현재가 할인 정도)',
+        'PE': 'PER (주가수익비율) - 낮을수록 저평가',
+        'PEG': 'PEG 비율 (PER/성장률) - 1 이하 매력적',
+        'PB': 'PBR (주가순자산비율) - 낮을수록 저평가',
+        'PS': 'PSR (주가매출비율) - 낮을수록 저평가',
+        'EV_EBITDA': 'EV/EBITDA 배수',
+
+        # 수익성 지표
+        'ROE(info)': '자기자본이익률 - 높을수록 우수',
+        'ROA(info)': '총자산이익률 - 높을수록 우수',
+        'OpMarginTTM': '영업이익률 (TTM) - 높을수록 우수',
+        'OperatingMargins(info)': '영업이익률 (info)',
+
+        # 성장성 지표
+        'RevYoY': '매출 YoY 성장률',
+        'EPS_Growth_3Y': '3년 EPS 성장률 (CAGR)',
+        'Revenue_Growth_3Y': '3년 매출 성장률 (CAGR)',
+        'EBITDA_Growth_3Y': '3년 EBITDA 성장률',
+
+        # 현금흐름
+        'FCF_Yield': 'FCF 수익률 (현금 창출 능력)',
+        'DivYield': '배당수익률',
+        'PayoutRatio': '배당성향',
+
+        # 재무안정성
+        'Beta': '베타 (시장 대비 변동성)',
+        'ShortPercent': '공매도 비율',
+        'InsiderOwnership': '내부자 지분율',
+        'InstitutionOwnership': '기관 투자자 지분율',
+
+        # 기술적 지표 (단타/장타)
+        'RVOL': '상대 거래량 (평균 대비)',
+        'RSI_14': 'RSI 14일 (30 이하 과매도, 70 이상 과매수)',
+        'ATR_PCT': 'ATR 퍼센트 (변동성)',
+        'Volatility_21D': '21일 변동성',
+        'RET5': '5일 수익률',
+        'RET20': '20일 수익률',
+        'RET63': '3개월 수익률',
+        'SMA20': '20일 이동평균',
+        'SMA50': '50일 이동평균',
+        'SMA200': '200일 이동평균',
+        'MACD': 'MACD 선',
+        'MACD_Signal': 'MACD 시그널 선',
+        'MACD_Histogram': 'MACD 히스토그램 (양수 = 상승 추세)',
+        'BB_Position': '볼린저밴드 위치 (0-1, 0.5 중앙)',
+        'High_52W_Ratio': '52주 고가 대비 비율',
+        'Low_52W_Ratio': '52주 저가 대비 비율',
+        'Momentum_12M': '12개월 모멘텀',
+
+        # 종합 점수
+        'GrowthScore': '성장 점수 (0-100%)',
+        'QualityScore': '품질 점수 (0-100%)',
+        'ValueScore': '가치 점수 (0-100%)',
+        'MomentumScore': '모멘텀 점수 (0-100%)',
+        'TotalScore': '종합 점수 (0-100점)',
+    }
+
+    # 전략별 필터 기준
+    STRATEGY_CRITERIA = {
+        'undervalued_quality': {
+            'name': '저평가 우량주 (워렌 버핏 스타일)',
+            'criteria': [
+                '시가총액: 20억 달러 이상',
+                '주가: 10달러 이상',
+                '거래대금: 500만 달러 이상',
+                'PER < 25 (섹터별 조정)',
+                'PEG < 1.5',
+                '매출 성장률 > 5%',
+                'EPS 성장률 > 5%',
+                '영업이익률 > 12%',
+                'ROE > 15%',
+                'FCF Yield > 3%',
+            ]
+        },
+        'value_basic': {
+            'name': '기본 가치투자',
+            'criteria': [
+                '시가총액: 5억 달러 이상',
+                '주가: 5달러 이상',
+                '거래대금: 100만 달러 이상',
+                'PER < 30 (섹터별 조정)',
+                'PEG < 2.0',
+                '영업이익률 > 5%',
+                'ROE > 8%',
+            ]
+        },
+        'value_strict': {
+            'name': '엄격한 가치투자',
+            'criteria': [
+                '시가총액: 20억 달러 이상',
+                '주가: 5달러 이상',
+                '거래대금: 500만 달러 이상',
+                'PER < 20 (섹터별 조정)',
+                'PEG < 1.5',
+                '매출 성장률 > 5%',
+                'EPS 성장률 > 5%',
+                '영업이익률 > 10%',
+                'ROE > 12%',
+                'FCF Yield > 2%',
+            ]
+        },
+        'growth_quality': {
+            'name': '성장+품질 (장타 전략)',
+            'criteria': [
+                '시가총액: 10억 달러 이상',
+                '매출 성장률 > 15%',
+                'EPS 성장률 > 10%',
+                '영업이익률 > 15%',
+                'ROE > 15%',
+                'PER < 40 (성장주 특성 반영)',
+                'PEG < 2.0',
+            ]
+        },
+        'momentum': {
+            'name': '모멘텀 트레이딩 (단타)',
+            'criteria': [
+                '주가: 10달러 이상',
+                '거래대금: 300만 달러 이상',
+                '상대 거래량 > 1.3배',
+                'RSI: 40-70 (과매도 후 반등)',
+                '20일 수익률 > 3%',
+                '52주 고가 대비 > 70%',
+                'MACD 히스토그램 > 0 (상승 추세)',
+            ]
+        },
+        'swing': {
+            'name': '스윙 트레이딩 (단타)',
+            'criteria': [
+                '주가: 5달러 이상',
+                '거래대금: 100만 달러 이상',
+                'ATR 변동성: 2-10%',
+                'RSI: 30-70',
+                '볼린저밴드 위치: 20-80%',
+                '5일 수익률: -5% ~ 10%',
+            ]
+        },
+    }
+
     @staticmethod
     def export(results: Dict[str, pd.DataFrame], filename: str = None):
         """결과를 엑셀로 출력"""
@@ -604,6 +754,9 @@ class ExcelExporter:
             filename = f"stock_screener_{timestamp}.xlsx"
 
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+            # Column Guide 시트 먼저 생성
+            ExcelExporter._create_column_guide(writer)
+
             # 요약 시트
             summary_data = []
             for profile, df in results.items():
@@ -627,7 +780,7 @@ class ExcelExporter:
             if summary_data:
                 summary_df = pd.DataFrame(summary_data)
                 summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                ExcelExporter._format_sheet(writer, 'Summary', summary_df)
+                ExcelExporter._format_sheet(writer, 'Summary', summary_df, is_summary=True)
 
             # 각 프로파일별 시트
             for profile, df in results.items():
@@ -664,31 +817,110 @@ class ExcelExporter:
                             lambda x: f"{x:.1f}B" if pd.notna(x) else ""
                         )
 
-                    df_copy.to_excel(writer, sheet_name=profile[:30], index=False)
-                    ExcelExporter._format_sheet(writer, profile[:30], df_copy)
+                    df_copy.to_excel(writer, sheet_name=profile[:30], index=False, startrow=5)
+                    ExcelExporter._format_sheet(writer, profile[:30], df_copy, profile=profile)
 
         print(f"\n📁 결과 저장 완료: {filename}")
         return filename
 
     @staticmethod
-    def _format_sheet(writer, sheet_name: str, df: pd.DataFrame):
+    def _create_column_guide(writer):
+        """Column Guide 시트 생성"""
+        guide_data = []
+        for col, desc in ExcelExporter.COLUMN_DESCRIPTIONS.items():
+            guide_data.append({'컬럼명': col, '설명': desc})
+
+        guide_df = pd.DataFrame(guide_data)
+        guide_df.to_excel(writer, sheet_name='Column_Guide', index=False)
+
+        # 포맷 적용
+        worksheet = writer.sheets['Column_Guide']
+
+        # 헤더 스타일
+        header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=12)
+
+        for col in range(1, 3):
+            cell = worksheet.cell(row=1, column=col)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # 컬럼 너비 설정
+        worksheet.column_dimensions['A'].width = 25
+        worksheet.column_dimensions['B'].width = 60
+
+        # 행 높이 및 정렬
+        for row in range(2, len(guide_data) + 2):
+            worksheet.row_dimensions[row].height = 20
+            worksheet.cell(row=row, column=1).alignment = Alignment(vertical='center')
+            worksheet.cell(row=row, column=2).alignment = Alignment(vertical='center', wrap_text=True)
+
+        # 틀 고정
+        worksheet.freeze_panes = 'A2'
+
+    @staticmethod
+    def _format_sheet(writer, sheet_name: str, df: pd.DataFrame, is_summary: bool = False, profile: str = None):
         """시트 포맷 적용"""
         worksheet = writer.sheets[sheet_name]
+
+        # 전략별 필터 기준 헤더 추가 (Summary 제외)
+        if not is_summary and profile and profile in ExcelExporter.STRATEGY_CRITERIA:
+            criteria_info = ExcelExporter.STRATEGY_CRITERIA[profile]
+
+            # 전략 이름 (1행)
+            worksheet.merge_cells('A1:C1')
+            title_cell = worksheet['A1']
+            title_cell.value = f"📊 {criteria_info['name']}"
+            title_cell.font = Font(bold=True, size=14, color="FFFFFF")
+            title_cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            title_cell.alignment = Alignment(horizontal='center', vertical='center')
+            worksheet.row_dimensions[1].height = 25
+
+            # 필터 기준 (2-4행)
+            worksheet.merge_cells('A2:C2')
+            criteria_cell = worksheet['A2']
+            criteria_cell.value = "📋 필터 기준:"
+            criteria_cell.font = Font(bold=True, size=11)
+            criteria_cell.fill = PatternFill(start_color="D6E4F5", end_color="D6E4F5", fill_type="solid")
+            criteria_cell.alignment = Alignment(horizontal='left', vertical='center')
+
+            criteria_text = '\n'.join([f"• {c}" for c in criteria_info['criteria']])
+            worksheet.merge_cells('A3:C4')
+            criteria_content = worksheet['A3']
+            criteria_content.value = criteria_text
+            criteria_content.font = Font(size=10)
+            criteria_content.fill = PatternFill(start_color="F2F6FC", end_color="F2F6FC", fill_type="solid")
+            criteria_content.alignment = Alignment(horizontal='left', vertical='top', wrap_text=True)
+            worksheet.row_dimensions[3].height = 30
+            worksheet.row_dimensions[4].height = 30
+
+            # 빈 행 (5행)
+            worksheet.row_dimensions[5].height = 5
+
+            # 데이터 헤더 행 (6행, startrow=5이므로 실제로는 6행부터)
+            header_row = 6
+
+        elif is_summary:
+            header_row = 1
+        else:
+            header_row = 1
 
         # 헤더 스타일
         header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True, size=11)
 
         for col in range(1, len(df.columns) + 1):
-            cell = worksheet.cell(row=1, column=col)
+            cell = worksheet.cell(row=header_row, column=col)
             cell.fill = header_fill
             cell.font = header_font
-            cell.alignment = Alignment(horizontal='center')
+            cell.alignment = Alignment(horizontal='center', vertical='center')
 
         # 컬럼 너비 자동 조정
         for idx, col in enumerate(df.columns, 1):
             max_length = len(str(col))
-            for row in range(2, min(len(df) + 2, 100)):
+            start_row = header_row + 1
+            for row in range(start_row, min(start_row + len(df), start_row + 100)):
                 try:
                     cell_value = worksheet.cell(row=row, column=idx).value
                     if cell_value:
@@ -700,7 +932,10 @@ class ExcelExporter:
             worksheet.column_dimensions[get_column_letter(idx)].width = adjusted_width
 
         # 틀 고정
-        worksheet.freeze_panes = 'C2'
+        if not is_summary and profile:
+            worksheet.freeze_panes = f'C{header_row + 1}'
+        else:
+            worksheet.freeze_panes = 'C2'
 
 
 # ============================================================================
