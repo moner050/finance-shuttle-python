@@ -62,8 +62,8 @@ CONFIG = {
     "SINGLE_RETRIES": 3,  # 개별 재시도
 
     # ⭐ 병렬 처리 설정
-    "OHLCV_WORKERS": 2,  # OHLCV 다운로드 병렬 스레드 수
-    "DETAIL_FETCH_WORKERS": 2,  # 상세 데이터 수집 병렬 스레드 수
+    "OHLCV_WORKERS": 1,  # OHLCV 다운로드 병렬 스레드 수
+    "DETAIL_FETCH_WORKERS": 1,  # 상세 데이터 수집 병렬 스레드 수
 
     # 디버깅 및 로깅
     "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
