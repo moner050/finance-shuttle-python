@@ -10,6 +10,30 @@ build_details_cache_fully_optimized.py
 5. ⭐ OHLCV 프리로드 병렬화 (2-3배 빠름)
 6. ⭐ 상세 데이터 수집 병렬화 (5-10배 빠름)
 7. ⭐ 이상치 처리 강화
+
+✨ 데이터 수집 안정성 개선사항:
+1. 📊 OHLCV 데이터 수집 안정성 향상:
+   - 부분 성공 케이스 처리: 배치에서 일부 실패 시 누락된 티커만 개별 다운로드
+   - 배치 크기 최적화: 50 → 30으로 축소하여 안정성 향상
+   - 최소 데이터 요구사항 완화: 50개 → 20개로 완화하여 더 많은 데이터 수집
+   - 개선된 재시도 로직: 배치 3회, 개별 4회 재시도
+
+2. 💼 상세 재무 데이터 수집 개선:
+   - 재무제표 API 재시도 로직 추가 (각 API 호출당 최대 3회)
+   - info 실패 시에도 재무제표 데이터 수집 시도
+   - 각 지표 계산 실패 시에도 다른 지표는 계속 수집
+   - 재무제표별 독립적인 에러 처리
+
+3. 🔍 에러 로깅 및 디버깅:
+   - 전체 에러 추적 시스템 추가
+   - 에러 로그 파일 자동 생성
+   - 데이터 품질 통계 자동 출력
+   - VERBOSE_LOGGING 옵션으로 상세 로그 제어
+
+4. 🛡️ 데이터 검증 개선:
+   - 검증 실패 시 대체 로직 추가
+   - 가격 검증 범위 확대
+   - 각 필드별 독립적인 에러 처리로 부분 데이터라도 수집
 """
 
 import os, io, time, math, random, warnings, logging, requests
@@ -33,13 +57,16 @@ CONFIG = {
     "INCLUDE_EXCEL": True,
 
     "PRELOAD_PERIOD": "252d",  # 1년 데이터 (52주 계산용)
-    "PRELOAD_CHUNK": 50,  # 배치 크기
-    "BATCH_RETRIES": 5,
-    "SINGLE_RETRIES": 3,
+    "PRELOAD_CHUNK": 30,  # 배치 크기 (50 -> 30으로 축소하여 안정성 향상)
+    "BATCH_RETRIES": 3,  # 재시도 횟수 줄이고 개별 다운로드로 빠르게 전환
+    "SINGLE_RETRIES": 4,  # 개별 재시도는 늘림
 
     # ⭐ 병렬 처리 설정
     "OHLCV_WORKERS": 2,  # OHLCV 다운로드 병렬 스레드 수
     "DETAIL_FETCH_WORKERS": 2,  # 상세 데이터 수집 병렬 스레드 수
+
+    # 디버깅 및 로깅
+    "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
 
     "YF_THREADS": False,
     "SLEEP_SEC": 0.1,  # 병렬 처리 시에는 짧게
@@ -131,22 +158,37 @@ def validate_volume(value):
     return validate_numeric(value, min_val=0, max_val=1e15, allow_negative=False)
 
 
+# ============== 에러 로깅 설정 ==============
+ERROR_LOG = []  # 에러 추적용
+
+
+def log_error(context, ticker, error_msg):
+    """에러 로깅 함수"""
+    msg = f"[{context}] {ticker}: {error_msg}"
+    ERROR_LOG.append(msg)
+    if CONFIG.get("VERBOSE_LOGGING", False):
+        print(f"⚠️  {msg}")
+
+
 # ============== 기술적 지표 계산 함수들 ==============
 
 def calculate_rsi(prices, window=14):
     """RSI 계산"""
-    if len(prices) < window + 1:
+    try:
+        if len(prices) < window + 1:
+            return None
+
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        result = rsi.iloc[-1] if not rsi.empty else None
+
+        # RSI는 0-100 범위
+        return validate_numeric(result, min_val=0, max_val=100)
+    except Exception as e:
         return None
-
-    delta = prices.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    result = rsi.iloc[-1] if not rsi.empty else None
-
-    # RSI는 0-100 범위
-    return validate_numeric(result, min_val=0, max_val=100)
 
 
 def calculate_macd(prices, fast=12, slow=26, signal=9):
@@ -222,10 +264,14 @@ def calculate_pe_ratio(ticker, price, info, df_q, df_a):
         trailing_pe = info.get("trailingPE")
         forward_pe = info.get("forwardPE")
         if trailing_pe and trailing_pe > 0:
-            pe_values.append(trailing_pe)
+            validated_pe = validate_ratio(trailing_pe, min_ratio=0.1, max_ratio=500)
+            if validated_pe:
+                pe_values.append(validated_pe)
         if forward_pe and forward_pe > 0:
-            pe_values.append(forward_pe)
-    except:
+            validated_pe = validate_ratio(forward_pe, min_ratio=0.1, max_ratio=500)
+            if validated_pe:
+                pe_values.append(validated_pe)
+    except Exception as e:
         pass
 
     # 방법 2: trailing EPS 사용
@@ -494,7 +540,8 @@ def load_universe():
 def _compute_enhanced_ta_single(c, h, l, v):
     """개선된 기술적 지표 계산 + 이상치 검증"""
     try:
-        if c is None or len(c.dropna()) < 50:
+        # 최소 데이터 요구사항 완화: 50개 -> 20개
+        if c is None or len(c.dropna()) < 20:
             return None
 
         c_clean = c.dropna()
@@ -502,9 +549,16 @@ def _compute_enhanced_ta_single(c, h, l, v):
             return None
 
         last_close = float(c_clean.iloc[-1])
+        # 가격 검증 범위 확대
         last_close = validate_price(last_close)
         if last_close is None:
-            return None
+            # 검증 실패 시에도 최소한의 데이터는 반환 시도
+            try:
+                last_close = float(c_clean.iloc[-1])
+                if last_close <= 0 or last_close > 1_000_000:  # 더 넓은 범위
+                    return None
+            except:
+                return None
 
         # 기본 지표들
         s20 = c_clean.rolling(20).mean().iloc[-1] if len(c_clean) >= 20 else None
@@ -645,16 +699,25 @@ def _compute_ta_metrics(df):
 
 
 def safe_yf_download(tickers, **kwargs):
-    """안전한 yfinance 다운로드"""
+    """안전한 yfinance 다운로드 with 개선된 에러 처리"""
     max_retries = kwargs.pop('max_retries', 3)
+    ticker_str = tickers if isinstance(tickers, str) else f"batch({len(tickers)})"
+
     for attempt in range(max_retries):
         try:
             data = yf.download(tickers, **kwargs)
-            if not data.empty:
+            if data is not None and not data.empty:
                 return data
-        except Exception:
+            elif attempt == max_retries - 1:
+                log_error("YF_DOWNLOAD", ticker_str, "Empty data returned")
+        except Exception as e:
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt + random.uniform(0, 1))
+                sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                log_error("YF_DOWNLOAD", ticker_str, f"Attempt {attempt+1} failed: {str(e)}, retrying in {sleep_time:.1f}s")
+                time.sleep(sleep_time)
+            else:
+                log_error("YF_DOWNLOAD", ticker_str, f"All {max_retries} attempts failed: {str(e)}")
+
     return None
 
 
@@ -776,9 +839,14 @@ def process_ohlcv_batch(args):
                 except Exception:
                     pass
 
-    # 배치 실패 시 개별 다운로드
-    if processed_count == 0:
-        for t in batch:
+    # 배치 실패 또는 부분 성공 시 누락된 티커만 개별 다운로드
+    failed_tickers = [t for t in batch if t not in ok_tickers_batch]
+
+    if failed_tickers:
+        if CONFIG.get("VERBOSE_LOGGING", False) and processed_count > 0:
+            print(f"  [배치 {batch_idx}] 부분 성공: {processed_count}/{len(batch)}, 누락 {len(failed_tickers)}개 개별 다운로드 시도")
+
+        for t in failed_tickers:
             for attempt in range(CONFIG["SINGLE_RETRIES"]):
                 try:
                     data = safe_yf_download(
@@ -788,7 +856,8 @@ def process_ohlcv_batch(args):
                         auto_adjust=False,
                         progress=False,
                         threads=False,
-                        timeout=30
+                        timeout=30,
+                        max_retries=2
                     )
                     if data is not None and not data.empty:
                         metrics = _compute_ta_metrics(data)
@@ -960,14 +1029,17 @@ def _eps_ttm_from_statements(df_q, df_a):
     return None
 
 
-def _safe_df(getter):
-    """DataFrame 안전하게 가져오기"""
-    try:
-        df = getter()
-        if df is not None and hasattr(df, 'empty') and not df.empty:
-            return df
-    except Exception:
-        pass
+def _safe_df(getter, max_retries=2):
+    """DataFrame 안전하게 가져오기 with 재시도"""
+    for attempt in range(max_retries):
+        try:
+            df = getter()
+            if df is not None and hasattr(df, 'empty') and not df.empty:
+                return df
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.5 + random.uniform(0, 0.5))
+            # 마지막 시도 실패 시는 조용히 실패 (너무 많은 로그 방지)
     return None
 
 
@@ -1261,12 +1333,28 @@ def fetch_single_ticker_wrapper(args):
 
 
 def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
-    """개선된 상세 데이터 수집"""
-    try:
-        t = yf.Ticker(tkr)
-        info = t.get_info() or {}
-    except Exception:
-        return _create_default_record(tkr, price, avg_vol)
+    """개선된 상세 데이터 수집 with 재시도"""
+    t = None
+    info = {}
+
+    # Ticker 객체 생성 및 info 가져오기 (재시도)
+    for attempt in range(3):
+        try:
+            t = yf.Ticker(tkr)
+            info = t.get_info() or {}
+            if info:  # info가 있으면 성공
+                break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(0.3 + random.uniform(0, 0.3))
+            else:
+                log_error("GET_INFO", tkr, f"Failed to get info after 3 attempts: {str(e)}")
+                # info 실패해도 계속 진행 (재무제표는 시도)
+                if t is None:
+                    try:
+                        t = yf.Ticker(tkr)
+                    except:
+                        return _create_default_record(tkr, price, avg_vol)
 
     try:
         mktcap = validate_market_cap(info.get("marketCap"))
@@ -1274,25 +1362,40 @@ def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
         avg_vol = validate_volume(avg_vol)
         dollar_vol = (float(price) * float(avg_vol)) if (price is not None and avg_vol is not None) else None
 
-        # 재무제표 데이터 수집
-        q_is = _safe_df(lambda: t.quarterly_income_stmt)
+        # 재무제표 데이터 수집 (재시도 로직 포함)
+        q_is = _safe_df(lambda: t.quarterly_income_stmt, max_retries=3)
         if q_is is None:
-            q_is = _safe_df(lambda: t.quarterly_financials)
+            q_is = _safe_df(lambda: t.quarterly_financials, max_retries=2)
 
-        a_is = _safe_df(lambda: t.income_stmt)
+        a_is = _safe_df(lambda: t.income_stmt, max_retries=3)
         if a_is is None:
-            a_is = _safe_df(lambda: t.financials)
+            a_is = _safe_df(lambda: t.financials, max_retries=2)
 
-        cf_q = _safe_df(lambda: t.quarterly_cashflow)
-        balance_a = _safe_df(lambda: t.balance_sheet)
+        cf_q = _safe_df(lambda: t.quarterly_cashflow, max_retries=3)
+        balance_a = _safe_df(lambda: t.balance_sheet, max_retries=3)
 
-        # 강화된 PER 계산
-        pe_enhanced = calculate_pe_ratio(tkr, price, info, q_is, a_is)
+        # 재무제표 수집 성공 여부 로깅
+        financial_data_available = sum([
+            q_is is not None,
+            a_is is not None,
+            cf_q is not None,
+            balance_a is not None
+        ])
 
-        # PEG 계산
+        if CONFIG.get("VERBOSE_LOGGING", False) and financial_data_available == 0:
+            log_error("FINANCIAL_DATA", tkr, "No financial statements available")
+
+        # 강화된 PER 계산 (에러 발생해도 계속 진행)
+        pe_enhanced = None
+        try:
+            pe_enhanced = calculate_pe_ratio(tkr, price, info, q_is, a_is)
+        except Exception as e:
+            log_error("PE_CALC", tkr, f"PE calculation failed: {str(e)}")
+
+        # PEG 계산 (에러 발생해도 계속 진행)
         peg_enhanced = None
-        if pe_enhanced and pe_enhanced > 0:
-            try:
+        try:
+            if pe_enhanced and pe_enhanced > 0:
                 earnings_growth = info.get("earningsGrowth") or info.get("earningsQuarterlyGrowth")
                 if earnings_growth and earnings_growth > 0:
                     peg_enhanced = pe_enhanced / (earnings_growth * 100)
@@ -1303,14 +1406,33 @@ def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
                     if eps_cagr and eps_cagr > 0:
                         peg_enhanced = pe_enhanced / (eps_cagr * 100)
                         peg_enhanced = validate_ratio(peg_enhanced, min_ratio=0, max_ratio=100)
-            except:
-                pass
+        except Exception as e:
+            log_error("PEG_CALC", tkr, f"PEG calculation failed: {str(e)}")
 
-        # 기본 재무 데이터
-        rev_yoy, op_margin = _calculate_financial_ratios(q_is, a_is)
-        ev_ebitda = _calculate_ev_ebitda(info, q_is)
-        fcf_yield = _calculate_fcf_yield(info, cf_q)
-        growth_indicators = _calculate_growth_indicators(q_is, a_is, info)
+        # 기본 재무 데이터 (각각 독립적으로 에러 처리)
+        rev_yoy = op_margin = None
+        try:
+            rev_yoy, op_margin = _calculate_financial_ratios(q_is, a_is)
+        except Exception as e:
+            log_error("FINANCIAL_RATIOS", tkr, f"Failed: {str(e)}")
+
+        ev_ebitda = None
+        try:
+            ev_ebitda = _calculate_ev_ebitda(info, q_is)
+        except Exception as e:
+            log_error("EV_EBITDA", tkr, f"Failed: {str(e)}")
+
+        fcf_yield = None
+        try:
+            fcf_yield = _calculate_fcf_yield(info, cf_q)
+        except Exception as e:
+            log_error("FCF_YIELD", tkr, f"Failed: {str(e)}")
+
+        growth_indicators = {"EPS_Growth_3Y": None, "Revenue_Growth_3Y": None, "EBITDA_Growth_3Y": None}
+        try:
+            growth_indicators = _calculate_growth_indicators(q_is, a_is, info)
+        except Exception as e:
+            log_error("GROWTH_INDICATORS", tkr, f"Failed: {str(e)}")
 
         # 이상치 검증
         operating_margins = validate_percentage(info.get("operatingMargins"), min_pct=-1.0, max_pct=1.0)
@@ -1362,14 +1484,18 @@ def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
         }
 
         # 누락된 데이터 계산으로 보완
-        calculated = calculate_missing_financials(tkr, info, q_is, a_is, cf_q, balance_a, price)
-        for key, value in calculated.items():
-            if rec.get(key) is None and value is not None:
-                rec[key] = value
+        try:
+            calculated = calculate_missing_financials(tkr, info, q_is, a_is, cf_q, balance_a, price)
+            for key, value in calculated.items():
+                if rec.get(key) is None and value is not None:
+                    rec[key] = value
+        except Exception as e:
+            log_error("MISSING_FINANCIALS", tkr, f"Failed: {str(e)}")
 
         return rec
 
-    except Exception:
+    except Exception as e:
+        log_error("FETCH_DETAILS", tkr, f"Unexpected error: {str(e)}")
         return _create_default_record(tkr, price, avg_vol, info)
 
 
@@ -1548,6 +1674,40 @@ def build_enhanced_details_cache():
             print(f"[캐시] 엑셀 저장: {xlsx_path}")
         except Exception as e:
             print(f"[캐시] 엑셀 저장 실패: {e}")
+
+    # 에러 로그 저장
+    if ERROR_LOG:
+        error_log_path = f"{base}_{ts}_errors.log"
+        try:
+            with open(error_log_path, 'w', encoding='utf-8') as f:
+                f.write(f"Total errors: {len(ERROR_LOG)}\n")
+                f.write("=" * 80 + "\n")
+                for error_msg in ERROR_LOG:
+                    f.write(error_msg + "\n")
+            print(f"[로그] 에러 로그 저장: {error_log_path} ({len(ERROR_LOG)}개 에러)")
+        except Exception as e:
+            print(f"[로그] 에러 로그 저장 실패: {e}")
+
+    # 데이터 품질 통계 출력
+    print("\n" + "=" * 60)
+    print("📊 데이터 품질 통계")
+    print("=" * 60)
+
+    quality_stats = {
+        "PE 있음": out["PE"].notna().sum(),
+        "PEG 있음": out["PEG"].notna().sum(),
+        "RevYoY 있음": out["RevYoY"].notna().sum(),
+        "OpMarginTTM 있음": out["OpMarginTTM"].notna().sum(),
+        "FCF_Yield 있음": out["FCF_Yield"].notna().sum(),
+        "ROE 있음": out["ROE(info)"].notna().sum(),
+        "EV_EBITDA 있음": out["EV_EBITDA"].notna().sum(),
+    }
+
+    for metric, count in quality_stats.items():
+        percentage = (count / len(out) * 100) if len(out) > 0 else 0
+        print(f"  {metric}: {count}/{len(out)} ({percentage:.1f}%)")
+
+    print("=" * 60)
 
     return out
 
