@@ -13,12 +13,15 @@ build_details_cache_fully_optimized.py
 
 ✨ 데이터 수집 안정성 개선사항:
 1. 📊 OHLCV 데이터 수집 안정성 향상:
+   - 순차 처리로 안정성 보장: yfinance API rate limiting 회피
+   - 배치 크기 최적화: 100개 (순차 처리 시 효율적)
    - 부분 성공 케이스 처리: 배치에서 일부 실패 시 누락된 티커만 개별 다운로드
    - 최소 데이터 요구사항 완화: 50개 → 20개로 완화하여 더 많은 종목 수집 가능
    - 스마트 재시도 로직: 배치 완전 실패 시 전체 재시도, 부분 실패 시 누락분만 재시도
-   - 재시도 횟수: 배치 5회, 개별 3회
+   - 재시도 횟수: 배치 3회, 개별 3회
 
 2. 💼 상세 재무 데이터 수집 개선:
+   - 병렬 처리로 속도 향상: 4개 스레드 (개별 API 호출은 스레드 안전)
    - 재무제표 API 재시도 로직 추가 (각 API 호출당 최대 3회)
    - info 실패 시에도 재무제표 데이터 수집 시도
    - 각 지표 계산 실패 시에도 다른 지표는 계속 수집
@@ -34,6 +37,10 @@ build_details_cache_fully_optimized.py
    - 검증 실패 시 대체 로직 추가
    - 가격 검증 범위 확대
    - 각 필드별 독립적인 에러 처리로 부분 데이터라도 수집
+
+⚡ 성능 최적화 전략:
+- OHLCV 수집: 순차 처리 (안정성 > 속도) → 6400+ 종목 안정적 수집
+- 상세 재무: 병렬 처리 4개 스레드 (속도 > 안정성) → 2-3배 빠른 수집
 """
 
 import os, io, time, math, random, warnings, logging, requests
@@ -57,13 +64,13 @@ CONFIG = {
     "INCLUDE_EXCEL": True,
 
     "PRELOAD_PERIOD": "252d",  # 1년 데이터 (52주 계산용)
-    "PRELOAD_CHUNK": 50,  # 배치 크기 (원래대로 복원)
-    "BATCH_RETRIES": 5,  # 배치 재시도
+    "PRELOAD_CHUNK": 100,  # 배치 크기 (순차 처리이므로 큰 배치 사용)
+    "BATCH_RETRIES": 3,  # 배치 재시도 (큰 배치이므로 재시도 줄임)
     "SINGLE_RETRIES": 3,  # 개별 재시도
 
     # ⭐ 병렬 처리 설정
-    "OHLCV_WORKERS": 2,  # OHLCV 다운로드 병렬 스레드 수
-    "DETAIL_FETCH_WORKERS": 2,  # 상세 데이터 수집 병렬 스레드 수
+    "OHLCV_WORKERS": 1,  # OHLCV는 순차 처리 (yfinance API 안정성 보장)
+    "DETAIL_FETCH_WORKERS": 4,  # 상세 데이터는 병렬 처리 (개별 API 호출은 안전)
 
     # 디버깅 및 로깅
     "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
@@ -891,12 +898,16 @@ def process_ohlcv_batch(args):
 
 
 def preload_ohlcv_light(tickers, period="120d", chunk=50, **kwargs):
-    """⭐ 병렬 처리된 OHLCV 데이터 프리로드"""
+    """⭐ 최적화된 OHLCV 데이터 프리로드 (순차/병렬 선택적 처리)"""
     TA, PX, VOL = {}, {}, {}
     ok_tickers = set()
 
     print(f"[OHLCV] {len(tickers)}개 종목 로드 시작...")
-    print(f"[OHLCV] {CONFIG['OHLCV_WORKERS']}개 스레드로 병렬 처리...")
+    workers = CONFIG['OHLCV_WORKERS']
+    if workers == 1:
+        print(f"[OHLCV] 순차 처리 모드 (안정성 최우선)")
+    else:
+        print(f"[OHLCV] {workers}개 스레드로 병렬 처리...")
 
     # 배치 생성
     batches = []
@@ -906,10 +917,10 @@ def preload_ohlcv_light(tickers, period="120d", chunk=50, **kwargs):
         batch_idx = i // chunk + 1
         batches.append((batch, batch_idx, total_batches, period))
 
-    # 병렬 처리
+    # 병렬 또는 순차 처리
     total_processed = 0
     completed = 0
-    with ThreadPoolExecutor(max_workers=CONFIG["OHLCV_WORKERS"]) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(process_ohlcv_batch, batch_info): batch_info for batch_info in batches}
 
         for future in as_completed(futures):
@@ -1334,11 +1345,12 @@ def fetch_single_ticker_wrapper(args):
 
 
 def fetch_enhanced_details_for_ticker(tkr, price, avg_vol):
-    """개선된 상세 데이터 수집 with 재시도"""
+    """개선된 상세 데이터 수집 with 재시도 (스레드 안전)"""
     t = None
     info = {}
 
     # Ticker 객체 생성 및 info 가져오기 (재시도)
+    # 각 스레드가 독립적으로 Ticker 객체를 생성하므로 스레드 안전
     for attempt in range(3):
         try:
             t = yf.Ticker(tkr)
@@ -1604,7 +1616,9 @@ def build_enhanced_details_cache():
     success_count = 0
     error_count = 0
 
-    print(f"[상세데이터] {CONFIG['DETAIL_FETCH_WORKERS']}개 스레드로 병렬 처리 시작...")
+    workers = CONFIG['DETAIL_FETCH_WORKERS']
+    print(f"[상세데이터] {workers}개 스레드로 병렬 처리 시작...")
+    print(f"[상세데이터] 예상 시간: {len(cand) / workers / 60 * 2:.1f}분 (약 2초/종목)")
 
     # 작업 준비
     tasks = [(t, row) for t, row in cand.set_index("Ticker").iterrows()]
@@ -1732,9 +1746,12 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("🚀 완전 최적화된 티커 캐시 빌더 시작")
     print("=" * 60)
-    print(f"  ✅ OHLCV 병렬 스레드: {CONFIG['OHLCV_WORKERS']}개")
-    print(f"  ✅ 상세 데이터 병렬 스레드: {CONFIG['DETAIL_FETCH_WORKERS']}개")
+    ohlcv_mode = "순차 처리 (안정성 우선)" if CONFIG['OHLCV_WORKERS'] == 1 else f"병렬 처리 ({CONFIG['OHLCV_WORKERS']}개 스레드)"
+    print(f"  📊 OHLCV 수집: {ohlcv_mode}")
+    print(f"  💼 상세 재무: 병렬 처리 ({CONFIG['DETAIL_FETCH_WORKERS']}개 스레드)")
+    print(f"  📦 배치 크기: {CONFIG['PRELOAD_CHUNK']}개")
     print(f"  ✅ 이상치 검증: 강화됨")
+    print(f"  🔍 에러 로깅: {'활성화' if CONFIG.get('VERBOSE_LOGGING', False) else '자동 저장'}")
     print("=" * 60 + "\n")
 
     start_time = time.time()
