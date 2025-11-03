@@ -38,11 +38,11 @@ CONFIG = {
     "SINGLE_RETRIES": 3,
 
     # ⭐ 병렬 처리 설정
-    "OHLCV_WORKERS": 2,  # OHLCV 다운로드 병렬 스레드 수
-    "DETAIL_FETCH_WORKERS": 2,  # 상세 데이터 수집 병렬 스레드 수
+    "OHLCV_WORKERS": 5,  # OHLCV 다운로드 병렬 스레드 수
+    "DETAIL_FETCH_WORKERS": 5,  # 상세 데이터 수집 병렬 스레드 수
 
     "YF_THREADS": False,
-    "SLEEP_SEC": 0.1,  # 병렬 처리 시에는 짧게
+    "SLEEP_SEC": 0.25,  # 병렬 처리 시에는 짧게
 
     # 네트워크 설정
     "REQUEST_TIMEOUT": 60,
