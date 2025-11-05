@@ -47,6 +47,7 @@ import os, io, time, math, random, warnings, logging, requests
 import pandas as pd, numpy as np, yfinance as yf
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from curl_cffi import requests
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -70,7 +71,7 @@ CONFIG = {
 
     # ⭐ 병렬 처리 설정
     "OHLCV_WORKERS": 1,  # OHLCV는 순차 처리 (yfinance API 안정성 보장)
-    "DETAIL_FETCH_WORKERS": 4,  # 상세 데이터는 병렬 처리 (개별 API 호출은 안전)
+    "DETAIL_FETCH_WORKERS": 1,  # 상세 데이터는 병렬 처리 (개별 API 호출은 안전)
 
     # 디버깅 및 로깅
     "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
@@ -100,15 +101,7 @@ CONFIG = {
 }
 # ==================================================
 
-HEADERS = {"User-Agent": CONFIG["USER_AGENT"]}
-HTTP_SESSION = requests.Session()
-HTTP_SESSION.headers.update(HEADERS)
-
-# 세션 설정
-session = requests.Session()
-session.headers.update({"User-Agent": CONFIG["USER_AGENT"]})
-if CONFIG["PROXY_SETTINGS"]:
-    session.proxies.update(CONFIG["PROXY_SETTINGS"])
+session = requests.Session(impersonate="chrome")
 
 
 # ============== ⭐ 이상치 검증 함수 ==============
