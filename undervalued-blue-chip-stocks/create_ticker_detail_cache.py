@@ -62,7 +62,7 @@ CONFIG = {
 
     # 캐시 출력
     "OUT_BASENAME": "",  # 비우면 자동: details_cache_{source}.csv
-    "INCLUDE_EXCEL": True,
+    "INCLUDE_EXCEL": False,
 
     "PRELOAD_PERIOD": "252d",  # 1년 데이터 (52주 계산용)
     "PRELOAD_CHUNK": 100,  # 배치 크기 (순차 처리이므로 큰 배치 사용)
@@ -77,7 +77,7 @@ CONFIG = {
     "VERBOSE_LOGGING": False,  # True로 설정하면 상세 에러 로그 출력
 
     "YF_THREADS": False,
-    "SLEEP_SEC": 0.25,  # 병렬 처리 시에는 짧게
+    "SLEEP_SEC": 0.5,  # 병렬 처리 시에는 짧게
 
     # 네트워크 설정
     "REQUEST_TIMEOUT": 60,
