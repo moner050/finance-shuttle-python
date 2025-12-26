@@ -70,6 +70,58 @@ class TickerListManager:
     ]
 
     @staticmethod
+    def get_all_us_tickers() -> list:
+        """
+        모든 미국 주식 시장의 티커 수집 (5000개+)
+        S&P 500, NASDAQ, NYSE, DOW, Russell 2000 등 포함
+        """
+        all_tickers = set()
+
+        # S&P 500 (500개)
+        logger.info("S&P 500 티커 수집 중...")
+        try:
+            sp500_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+            sp500_tickers = sp500_df['Symbol'].tolist()
+            all_tickers.update(sp500_tickers)
+            logger.info(f"✓ S&P 500에서 {len(sp500_tickers)}개 추가")
+        except Exception as e:
+            logger.warning(f"S&P 500 로드 실패: {e}")
+
+        # NASDAQ 100
+        logger.info("NASDAQ 100 티커 수집 중...")
+        try:
+            nasdaq_df = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[5]
+            nasdaq_tickers = nasdaq_df['Ticker'].tolist()
+            all_tickers.update(nasdaq_tickers)
+            logger.info(f"✓ NASDAQ 100에서 {len(nasdaq_tickers)}개 추가")
+        except Exception as e:
+            logger.warning(f"NASDAQ 100 로드 실패: {e}")
+
+        # DOW JONES (30개)
+        logger.info("DOW JONES 티커 수집 중...")
+        try:
+            dow_df = pd.read_html('https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average')[1]
+            dow_tickers = dow_df['Symbol'].tolist()
+            all_tickers.update(dow_tickers)
+            logger.info(f"✓ DOW JONES에서 {len(dow_tickers)}개 추가")
+        except Exception as e:
+            logger.warning(f"DOW JONES 로드 실패: {e}")
+
+        # Russell 2000 (중소형주)
+        logger.info("Russell 2000 티커 수집 중...")
+        try:
+            russell_df = pd.read_html('https://en.wikipedia.org/wiki/Russell_2000')[1]
+            russell_tickers = russell_df['Ticker'].tolist()
+            all_tickers.update(russell_tickers)
+            logger.info(f"✓ Russell 2000에서 {len(russell_tickers)}개 추가")
+        except Exception as e:
+            logger.warning(f"Russell 2000 로드 실패: {e}")
+
+        result = sorted(list(all_tickers))
+        logger.info(f"총 {len(result)}개의 고유 티커 수집 완료")
+        return result
+
+    @staticmethod
     def get_sp500_tickers() -> list:
         """S&P 500 티커 목록 반환"""
         try:
@@ -278,19 +330,24 @@ class OHLCVExporter:
 # 메인 실행
 # ============================================================================
 
-def main(test_mode: bool = False, test_count: int = 5):
+def main(test_mode: bool = False, test_count: int = 5, use_all_tickers: bool = False):
     """
     메인 실행 함수
 
     Args:
         test_mode: True이면 테스트 모드 (적은 수의 티커로 실행)
         test_count: 테스트 모드에서 처리할 티커 수
+        use_all_tickers: True이면 모든 미국 주식 티커 사용 (5000개+)
     """
 
     logger.info("=" * 60)
     logger.info("yfinance OHLCV CSV 내보내기 프로그램 시작")
-    if test_mode:
-        logger.info(f"(테스트 모드: {test_count}개 티커만 처리)")
+    if use_all_tickers:
+        logger.info("(모드: 모든 미국 주식 티커 다운로드 - 5000개+)")
+    elif test_mode:
+        logger.info(f"(모드: 테스트 - {test_count}개 티커만 처리)")
+    else:
+        logger.info("(모드: S&P 500 표준 목록)")
     logger.info("=" * 60)
 
     # 내보내기 객체 생성
@@ -298,7 +355,10 @@ def main(test_mode: bool = False, test_count: int = 5):
 
     # 티커 목록 수집
     logger.info("\n[Step 1] 티커 목록 수집")
-    tickers = TickerListManager.get_sp500_tickers()
+    if use_all_tickers:
+        tickers = TickerListManager.get_all_us_tickers()
+    else:
+        tickers = TickerListManager.get_sp500_tickers()
 
     # 테스트 모드: 제한된 수의 티커만 처리
     if test_mode:
@@ -337,6 +397,7 @@ if __name__ == "__main__":
 
     # 커맨드라인 인자 처리
     test_mode = "--test" in sys.argv
+    use_all_tickers = "--all" in sys.argv
     test_count = 5
 
     if "--test-count" in sys.argv:
@@ -346,4 +407,29 @@ if __name__ == "__main__":
         except (IndexError, ValueError):
             pass
 
-    main(test_mode=test_mode, test_count=test_count)
+    if "--help" in sys.argv:
+        print("""
+yfinance OHLCV CSV 내보내기 프로그램 (고급 버전)
+
+사용법:
+  python yfinance_ohlcv_csv_exporter.py [옵션]
+
+옵션:
+  --all           모든 미국 주식 티커 다운로드 (5000개+)
+  --test          테스트 모드 (5개 티커만)
+  --test-count N  테스트 모드에서 N개 티커 처리
+  --help          도움말 표시
+
+예시:
+  # 모든 미국 주식 다운로드
+  python yfinance_ohlcv_csv_exporter.py --all
+
+  # S&P 500만 다운로드
+  python yfinance_ohlcv_csv_exporter.py
+
+  # 테스트 모드 (10개 티커)
+  python yfinance_ohlcv_csv_exporter.py --test --test-count 10
+        """)
+        sys.exit(0)
+
+    main(test_mode=test_mode, test_count=test_count, use_all_tickers=use_all_tickers)

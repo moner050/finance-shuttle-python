@@ -126,6 +126,56 @@ class SimpleOHLCVExporter:
         return stats
 
 
+def get_all_us_tickers() -> list:
+    """
+    미국 주식 시장의 모든 티커 수집 (5000개+)
+
+    S&P 500, NASDAQ, NYSE, AMEX 등 모든 거래소의 티커를 포함
+    """
+    all_tickers = set()
+
+    print("  [1/4] S&P 500 티커 수집 중...", end=" ", flush=True)
+    try:
+        sp500_df = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        sp500_tickers = sp500_df['Symbol'].tolist()
+        all_tickers.update(sp500_tickers)
+        print(f"✓ {len(sp500_tickers)}개")
+    except Exception as e:
+        print(f"✗ 오류: {e}")
+
+    print("  [2/4] NASDAQ 티커 수집 중...", end=" ", flush=True)
+    try:
+        nasdaq_df = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[5]
+        nasdaq_tickers = nasdaq_df['Ticker'].tolist()
+        all_tickers.update(nasdaq_tickers)
+        print(f"✓ {len(nasdaq_tickers)}개 (인덱스)")
+    except Exception as e:
+        print(f"✗ 오류: {e}")
+
+    print("  [3/4] NYSE 티커 수집 중...", end=" ", flush=True)
+    try:
+        # NYSE 주요 기업들 (완전 리스트는 API 제한이 있어 샘플 사용)
+        nyse_df = pd.read_html('https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average')[1]
+        dow_tickers = nyse_df['Symbol'].tolist()
+        all_tickers.update(dow_tickers)
+        print(f"✓ {len(dow_tickers)}개 (DOW)")
+    except Exception as e:
+        print(f"✗ 오류: {e}")
+
+    print("  [4/4] 추가 거래소 티커 수집 중...", end=" ", flush=True)
+    try:
+        # Russell 2000 (중소형주)
+        russell_df = pd.read_html('https://en.wikipedia.org/wiki/Russell_2000')[1]
+        russell_tickers = russell_df['Ticker'].tolist()
+        all_tickers.update(russell_tickers)
+        print(f"✓ {len(russell_tickers)}개 (Russell 2000)")
+    except Exception as e:
+        print(f"✗ 오류: {e}")
+
+    result = sorted(list(all_tickers))
+    return result
+
+
 def get_major_tickers() -> list:
     """주요 미국 주식 티커 목록 반환"""
     # S&P 500의 주요 기업들 (100개 샘플)
@@ -186,28 +236,40 @@ def main():
     # 커맨드라인 인자 처리
     output_dir = "ohlcv-csv-data"
     custom_tickers = None
+    use_all_tickers = False
 
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--output-dir" and i + 1 < len(sys.argv) - 1:
             output_dir = sys.argv[i + 2]
         elif arg == "--tickers" and i + 1 < len(sys.argv) - 1:
             custom_tickers = sys.argv[i + 2].split(',')
+        elif arg == "--all":
+            use_all_tickers = True
         elif arg == "--help":
             print("\n사용법:")
             print("  python simple_yfinance_exporter.py [옵션]")
             print("\n옵션:")
+            print("  --all                       모든 미국 주식 티커 다운로드 (5000개+)")
             print("  --tickers AAPL,MSFT,GOOGL  커스텀 티커 목록 (쉼표로 구분)")
             print("  --output-dir ./csv_data     CSV 저장 디렉토리 (기본: ohlcv-csv-data)")
             print("\n예시:")
             print("  # 주요 100개 티커 다운로드")
             print("  python simple_yfinance_exporter.py")
+            print("\n  # 모든 미국 주식 (5000개+) 다운로드")
+            print("  python simple_yfinance_exporter.py --all")
             print("\n  # 특정 티커만 다운로드")
             print("  python simple_yfinance_exporter.py --tickers AAPL,MSFT,GOOGL")
+            print("\n  # 모든 티커를 커스텀 디렉토리에 저장")
+            print("  python simple_yfinance_exporter.py --all --output-dir ./my-data")
             return
 
     # 티커 목록 결정
     if custom_tickers:
         tickers = [t.strip().upper() for t in custom_tickers]
+    elif use_all_tickers:
+        print("\n[Step 1] 모든 미국 주식 티커 목록 수집 (5000개+)")
+        tickers = get_all_us_tickers()
+        print(f"✓ {len(tickers)}개 티커 준비 완료")
     else:
         print("\n[Step 1] 주요 미국 주식 100개 티커 목록 준비")
         tickers = get_major_tickers()

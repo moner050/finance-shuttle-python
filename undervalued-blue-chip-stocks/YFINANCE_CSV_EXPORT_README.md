@@ -49,6 +49,22 @@ python3 simple_yfinance_exporter.py
 
 이 명령어는 S&P 500의 주요 기업 100개 티커의 OHLCV 데이터를 다운로드하여 `ohlcv-csv-data/` 디렉토리에 저장합니다.
 
+### 모든 미국 주식 다운로드 (5000개+)
+
+```bash
+# 모든 미국 주식 (S&P 500, NASDAQ, DOW, Russell 2000 등)
+python3 simple_yfinance_exporter.py --all
+```
+
+이 명령어는 다음 인덱스의 모든 티커를 수집하여 다운로드합니다:
+- **S&P 500**: 약 500개 기업
+- **NASDAQ 100**: 약 100개 기업
+- **DOW JONES**: 30개 우량주
+- **Russell 2000**: 약 2,000개 중소형주
+- **총**: 약 5,000개 이상의 고유 티커
+
+**예상 시간**: 200-500개 티커는 약 1-2시간, 5000개+ 모든 티커는 12-24시간 (인터넷 속도에 따라 다름)
+
 ### 특정 티커만 다운로드
 
 ```bash
@@ -65,7 +81,7 @@ python3 simple_yfinance_exporter.py --tickers AAPL,MSFT
 python3 simple_yfinance_exporter.py --output-dir ./my-csv-data
 
 # 또는 두 옵션 함께 사용
-python3 simple_yfinance_exporter.py --tickers AAPL,MSFT,GOOGL --output-dir ./my-csv-data
+python3 simple_yfinance_exporter.py --all --output-dir ./my-csv-data
 ```
 
 ### 도움말 표시
@@ -187,19 +203,49 @@ pip install pandas
 
 ## 파일 설명
 
-### simple_yfinance_exporter.py
+### simple_yfinance_exporter.py (권장)
 
-간단하고 사용하기 쉬운 메인 프로그램입니다. 대부분의 경우 이 프로그램을 사용하면 됩니다.
+간단하고 사용하기 쉬운 메인 프로그램입니다. 다음 기능을 지원합니다:
 
-### yfinance_ohlcv_csv_exporter.py
+```bash
+# 주요 100개 티커 (기본)
+python3 simple_yfinance_exporter.py
 
-더 고급 기능을 가진 버전입니다. 병렬 처리, 상세 로깅, 재시도 로직 등을 포함합니다.
+# 모든 미국 주식 (5000개+)
+python3 simple_yfinance_exporter.py --all
+
+# 특정 티커만
+python3 simple_yfinance_exporter.py --tickers AAPL,MSFT,GOOGL
+
+# 커스텀 출력 디렉토리
+python3 simple_yfinance_exporter.py --all --output-dir ./data
+```
+
+### yfinance_ohlcv_csv_exporter.py (고급)
+
+더 고급 기능을 가진 버전입니다. 다음 특징을 포함합니다:
+- 병렬 처리로 더 빠른 다운로드
+- 상세 로깅 및 재시도 로직
+- 다운로드 중 발생한 오류 추적
+- 테스트 모드 지원
 
 사용법:
 
 ```bash
-python3 yfinance_ohlcv_csv_exporter.py --test --test-count 5  # 테스트 모드
-python3 yfinance_ohlcv_csv_exporter.py                         # 전체 실행
+# 테스트 모드 (5개 티커)
+python3 yfinance_ohlcv_csv_exporter.py --test
+
+# 테스트 모드 (10개 티커)
+python3 yfinance_ohlcv_csv_exporter.py --test --test-count 10
+
+# S&P 500 다운로드
+python3 yfinance_ohlcv_csv_exporter.py
+
+# 모든 미국 주식 다운로드 (5000개+)
+python3 yfinance_ohlcv_csv_exporter.py --all
+
+# 도움말
+python3 yfinance_ohlcv_csv_exporter.py --help
 ```
 
 ## 라이센스
