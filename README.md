@@ -44,3 +44,16 @@ python undervalued-blue-chip-stocks/collect_fundamentals_last_year.py --out-dir 
 ```shell
 python undervalued-blue-chip-stocks/collect_fundamentals_last_year.py --tickers AAPL,MSFT,NVDA,TSLA --out-dir fundamentals-output
 ```
+
+## 1년 OHLCV 수집 (yfinance)
+- 약 30개 티커(기본값)를 고정해두고, 각 티커별로 최근 1년 OHLCV(일봉)를 CSV로 저장합니다.
+- 결과는 out-dir 아래에 "티커별 CSV"로 생성됩니다.
+
+```shell
+python undervalued-blue-chip-stocks/collect_ohlcv_last_year.py --out-dir ohlcv-output --lookback-days 365
+```
+
+- 티커를 직접 지정하고 싶으면:
+```shell
+python undervalued-blue-chip-stocks/collect_ohlcv_last_year.py --tickers AAPL,MSFT,NVDA,TSLA --out-dir ohlcv-output
+```
