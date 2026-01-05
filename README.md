@@ -29,3 +29,18 @@ pip install -U yfinance==0.2.43 pandas numpy matplotlib XlsxWriter openpyxl
   - 일별 거래 수익률 데이터 볼 수 있는 백오피스 화면 개발
   - Slack 을 이용한 매수 및 매도 알림 기능 설정
   - 한국, 미국, 코인 자동매매 가능하도록 설정
+
+## 1년 펀더멘털 수집 (yfinance)
+- 약 30개 티커(기본값)를 고정해두고, 각 티커별로
+  1) 현재 시점 fundamental 스냅샷(info)
+  2) 현재 시점 기준 최근 1년 분기 재무제표(손익/재무상태/현금흐름)
+  를 CSV로 저장합니다.
+
+```shell
+python undervalued-blue-chip-stocks/collect_fundamentals_last_year.py --out-dir fundamentals-output --lookback-days 365
+```
+
+- 티커를 직접 지정하고 싶으면:
+```shell
+python undervalued-blue-chip-stocks/collect_fundamentals_last_year.py --tickers AAPL,MSFT,NVDA,TSLA --out-dir fundamentals-output
+```
