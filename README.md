@@ -57,3 +57,19 @@ python undervalued-blue-chip-stocks/collect_ohlcv_last_year.py --out-dir ohlcv-o
 ```shell
 python undervalued-blue-chip-stocks/collect_ohlcv_last_year.py --tickers AAPL,MSFT,NVDA,TSLA --out-dir ohlcv-output
 ```
+
+## 일별 파생 펀더멘털(PER/PBR/시총)
+- 목적: "일별 가격 변화"에 의해 변하는 파생 지표(시총/PER/PBR)를 1년치 시계열로 생성합니다.
+- 구성:
+  - 일봉 OHLCV: `yfinance.download()`로 수집
+  - 주식수/TTM EPS/Book Value per Share: `Ticker.get_info()` 기준 "현재 시점" 값을 사용
+  - 액면분할(Split) 이벤트: `Ticker.splits`를 이용해 분할만 반영(배당 조정은 반영하지 않음)
+
+```shell
+python undervalued-blue-chip-stocks/collect_derived_fundamentals_daily.py --out-dir derived-fundamentals-output --lookback-days 365
+```
+
+- 티커를 직접 지정하고 싶으면:
+```shell
+python undervalued-blue-chip-stocks/collect_derived_fundamentals_daily.py --tickers AAPL,MSFT,NVDA,TSLA --out-dir derived-fundamentals-output
+```
